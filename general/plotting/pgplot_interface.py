@@ -123,10 +123,10 @@ class PgplotInterface:
     ,    'rose':{'ci':13,'rgb':None}\
     ,    'grey':{'ci':14,'rgb':None}\
     ,   'lgrey':{'ci':15,'rgb':None}}
-    self.maxCI = 0
+    self.maxCI = None
     for colour in self.colours.keys():
       ci = self.colours[colour]['ci']
-      if ci > self.maxCI:
+      if self.maxCI is None or ci > self.maxCI:
         self.maxCI = ci
 
     self._oldCI            = None
@@ -186,8 +186,20 @@ class PgplotInterface:
     self.yPixelWorld = (yHiInches - yLoInches) / (yHiPixels - yLoPixels)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def getColourIndexRange(self):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
+    (minCI,maxCI) = pgplot.pgqcol()
+    minCI = max(minCI, len(self.colours.keys()))
+    return (minCI, maxCI)
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def getPixelSize(self):
     # This returns a tuple giving the X and Y dimensions of the device pixels in world coordinates.
+
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
 
     (x0,x1,y0,y1) = pgplot.pgqvsz(3)
     pixelXSizeWorld = (self.worldXHi - self.worldXLo)/(x1 - x0)
@@ -211,7 +223,10 @@ class PgplotInterface:
     if colour in self.colours.keys():
       self.colours[colour]['rgb'] = rgb
     else:
-      self.maxCI += 1
+      if self.maxCI is None:
+        self.maxCI = 0
+      else:
+        self.maxCI += 1
 ##### check it does not exceed max.
       self.colours[colour] = {'ci':self.maxCI,'rgb':rgb}
 
@@ -239,6 +254,10 @@ class PgplotInterface:
         raise ex.UnrecognizedChoiceObject(colour)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def getColour(self):
+    return pgplot.pgqci()
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setFill(self, doFill=True):
     if doFill:
       pgplot.pgsfs(1)
@@ -246,7 +265,8 @@ class PgplotInterface:
       pgplot.pgsfs(2)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def getFill(self, fillStyle):
+  def getFill(self):
+    fillStyle = pgplot.pgqfs()
     if fillStyle==1:
       return True
     else:
@@ -254,27 +274,45 @@ class PgplotInterface:
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawLine(self, xLo, yLo, xHi, yHi):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
     pgplot.pgmove(xLo, yLo)
     pgplot.pgdraw(xHi, yHi)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawRectangle(self, xLo, yLo, xHi, yHi):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
     pgplot.pgrect(xLo, xHi, yLo, yHi)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawPolyLine(self, xs, ys):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
     pgplot.pgline(xs, ys)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawPolygon(self, polygonXs, polygonYs):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
     pgplot.pgpoly(polygonXs, polygonYs)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def writeCenteredText(self, x, y, text):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
     pgplot.pgptxt(x, y, 0.0, 0.5, text)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def terminatePlot(self, withBox=False):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
     if withBox:
       xOpt = 'BC'#NT'
       yOpt = 'BC'#NT'

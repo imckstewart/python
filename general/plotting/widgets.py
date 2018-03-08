@@ -279,16 +279,9 @@ class _Widget:
       return False
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def enable(self):
-    # This is needed because some callbacks may want to toggle this state. Also we need a method particularly for Frame objects, so they can also enable all their children.
-    self.isEnabled = True
-    self.redraw = True
-    self.draw()
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def disable(self):
+  def changeEnableState(self, isEnabled):
     # This is needed because some callbacks may want to toggle this state. Also we need a method particularly for Frame objects, so they can also disable all their children.
-    self.isEnabled = False
+    self.isEnabled = isEnabled
     self.redraw = True
     self.draw()
 
@@ -308,7 +301,7 @@ class _Widget:
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def _doNothingCallback(self, widget, lastClickEvent):
-    return lastClickEvent
+    return None
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def checkColoursChildren(self):
@@ -393,7 +386,7 @@ An _ClickableWidget object has a callback function (although this can be None, i
     oldClickEvent = lastClickEvent.copy() # just to avoid possible side-effects.
     if self.isEnabled:
       if self.redrawOnClick:
-        self.drawPress()
+        self.drawOnClick()
       newClickEvent = self.callbackFunction(self, oldClickEvent)
     else:
       newClickEvent = self._doNothingCallback(self, oldClickEvent)
@@ -401,7 +394,7 @@ An _ClickableWidget object has a callback function (although this can be None, i
     return newClickEvent
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def drawPress(self):
+  def drawOnClick(self):
     raise ex.EmptyMethod()
 
 #.......................................................................
@@ -437,7 +430,10 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
     self.alongJustify = alongJustify # justify children within the frame in the direction of their sequence: leftOrDown, rightOrUp, centre or spread.
     self.crossJustify = crossJustify # justify children within the frame normal to their sequence: leftOrDown, rightOrUp or centre.
 
-    self.defaultCallbackFunction = defaultCallbackFunction
+    if not parent is None and defaultCallbackFunction is None:
+      self.defaultCallbackFunction = parent.defaultCallbackFunction
+    else:
+      self.defaultCallbackFunction = defaultCallbackFunction
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def _append(self, child):
@@ -456,9 +452,10 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
           break
 
       else: # no child contained the cursor at the time of mouse click.
-        if self.defaultCallbackFunction is None:
-          newClickEvent = None
-        else:
+        newClickEvent = None
+
+      if newClickEvent is None: # can happen if (i) the cursor was inside no child, (ii) the child was a passive widget, (iii) child._doNothingCallback() was activated and returned None.
+        if not self.defaultCallbackFunction is None:
           newClickEvent = self.defaultCallbackFunction(self, oldClickEvent)
 
     else: # Frame is not enabled.
@@ -467,16 +464,11 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
     return newClickEvent
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def enable(self):
-    self.isEnabled = True
+  def changeEnableState(self, isEnabled):
+    # This is needed because some callbacks may want to toggle this state. Also we need a method particularly for Frame objects, so they can also disable all their children.
+    self.isEnabled = isEnabled
     for child in self.childList:
-      child.enable()
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def disable(self):
-    self.isEnabled = False
-    for child in self.childList:
-      child.disable()
+      child.changeEnableState(isEnabled)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setUpPlotter(self):
@@ -559,11 +551,8 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
 
     if self.gui._debug:
       print spaces+'Calculating total %s size of children of %s' % (_dirStrs[xOrY], self.name)
-#      print '>>', self.spaceDemand[xOrY], '<<'
       if self.spaceDemand[xOrY]=='exact':
         print spaces+'%s size of %s is %f' % (_dirStrs[xOrY], self.name, self.size[xOrY])
-#      else:
-#        print 'Frame %s %s spaceDemand is %s' % (self.name, _dirStrs[xOrY], self.spaceDemand[xOrY])
 
     numChildren = len(self.childList) # for convenience.
     if numChildren<=0:
@@ -787,7 +776,7 @@ class Button(_ClickableWidget,_TextWidget):
       , self.disabledInkColour)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def drawPress(self):
+  def drawOnClick(self):
     self.widgetPlotter.draw(self.isEnabled, isPressed=True)
     time.sleep(0.1)
     self.widgetPlotter.draw(self.isEnabled, isPressed=False)
@@ -830,7 +819,7 @@ class CheckButton(Button):
     self.widgetPlotter.draw(self.isEnabled, self.isSelected)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def drawPress(self): # inherited from Button, but we don't need it.
+  def drawOnClick(self): # inherited from Button, but we don't need it.
     raise ex.EmptyMethod()
 
 #.......................................................................
@@ -929,11 +918,7 @@ class Canvas(_ClickableWidget):
     self.alreadyDrawnOnce = False
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def enable(self):
-    pass
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def disable(self):
+  def changeEnableState(self, isEnabled):
     pass
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -1067,19 +1052,19 @@ class GUI(Frame):
     if self._debug: print
 
     self.plotter.initializePlot(self.ranges[0].lo, self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi, self.bgColour)
-    if not self.userInitialFunction is None:
-      self.userInitialFunction(self) # the user could e.g. use this to do an initial drawing on canvasses before blocking for the first mouse click.
-
     self.checkColoursChildren()
+    self.setUpPlotter()
 
     self.isSetUp = True
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def __call__(self):
     if not self.isSetUp: self.doSetUp()
-    self.setUpPlotter()
     self.draw()
     self.isFirstDraw = False
+
+    if not self.userInitialFunction is None:
+      self.userInitialFunction(self) # the user could e.g. use this to do an initial drawing on canvasses before blocking for the first mouse click.
 
     # Now enter main loop:
     #

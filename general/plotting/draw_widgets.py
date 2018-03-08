@@ -72,8 +72,6 @@ class _WidgetPlotter:
     ,     'paper':[0.65,0.65,0.65]\
     ,       'ink':[1.0,1.0,1.0]\
     ,  'half-ink':[0.8,0.8,0.8]\
-    ,     'black':[0.0,0.0,0.0]\
-    ,     'white':[1.0,1.0,1.0]\
     ,       'red':[1.0,0.0,0.0]\
     ,   'halfred':[0.75,0.5,0.5]}
 
@@ -129,7 +127,11 @@ class _WidgetPlotter:
       litColour = 'halflit'
       shadowColour = 'halfshadow'
 
+    oldFill = self.lowLevelPlotter.getFill()
+    oldColour = self.lowLevelPlotter.getColour()
     self._drawBackground(bgColour)
+    self.lowLevelPlotter.setFill(oldFill)
+    self.lowLevelPlotter.setColour(oldColour)
 
     return (inkColour, litColour, shadowColour)
 
@@ -147,6 +149,9 @@ class _FramePlotter(_WidgetPlotter):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def draw(self, enabled):
+    oldFill = self.lowLevelPlotter.getFill()
+    oldColour = self.lowLevelPlotter.getColour()
+
     (inkColour, litColour, shadowColour) = _WidgetPlotter.draw(self, enabled)
 
     self.lowLevelPlotter.setFill(False)
@@ -180,6 +185,9 @@ class _FramePlotter(_WidgetPlotter):
     self.lowLevelPlotter.drawLine(x0, y0, x0, y1)
     self.lowLevelPlotter.drawLine(x0, y1, x1, y1)
 
+    self.lowLevelPlotter.setFill(oldFill)
+    self.lowLevelPlotter.setColour(oldColour)
+
 #.......................................................................
 class _LabelPlotter(_WidgetPlotter):
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -194,11 +202,15 @@ class _LabelPlotter(_WidgetPlotter):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def draw(self, enabled):
+    oldColour = self.lowLevelPlotter.getColour()
+
     (inkColour, litColour, shadowColour) = _WidgetPlotter.draw(self, enabled)
 
     self.lowLevelPlotter.setColour(inkColour)
     self.lowLevelPlotter.writeCenteredText(self.textCentreX, self.textCentreY\
       , self.text)
+
+    self.lowLevelPlotter.setColour(oldColour)
 
 #.......................................................................
 class _ButtonPlotter(_WidgetPlotter):
@@ -228,11 +240,14 @@ class _ButtonPlotter(_WidgetPlotter):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def draw(self, enabled, isPressed):
+    oldColour = self.lowLevelPlotter.getColour()
     (inkColour, litColour, shadowColour) = _WidgetPlotter.draw(self, enabled)
     if isPressed:
       self._drawButton(inkColour, shadowColour, litColour)
     else:
       self._drawButton(inkColour, litColour, shadowColour)
+
+    self.lowLevelPlotter.setColour(oldColour)
 
 #.......................................................................
 class _CanvasPlotter(_WidgetPlotter):
@@ -424,6 +439,9 @@ Returns the world coordinate location of the pointer.
     posFracOnTrack = self.getPosFracFromCursor(x, y)
     (ptrX, ptrY) = self.getPointerLoc(posFracOnTrack)
 
+    oldFill = self.lowLevelPlotter.getFill()
+    oldColour = self.lowLevelPlotter.getColour()
+
     (inkColour, litColour, shadowColour) = _WidgetPlotter.draw(self, enabled)
 
     self._drawScale(inkColour)
@@ -435,6 +453,8 @@ Returns the world coordinate location of the pointer.
     self._drawGroove(inkColour)
     self._drawPtr(ptrX, ptrY, inkColour)
 
+    self.lowLevelPlotter.setFill(oldFill)
+    self.lowLevelPlotter.setColour(oldColour)
 
 #.......................................................................
 # This is the only class an external user should instantiate.
