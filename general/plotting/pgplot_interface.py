@@ -94,9 +94,9 @@ class PgplotInterface:
     else:
       self.cursorHandler = cursorHandler
 
-    self.deviceName = None
-    self.widthInches    = None
-    self.yOnXRatio      = None
+    self.deviceName  = None
+    self.widthInches = None
+    self.yOnXRatio   = None
 
     self.doPad = None
     self.fixAspect = None
@@ -135,29 +135,37 @@ class PgplotInterface:
     self._oldFillStyle     = None
     self._oldCharHeight    = None
 
-    self.plotDeviceIsOpened = False
+    self.plotDeviceIsOpened = False # default
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def initializePlot(self, worldXLo, worldXHi, worldYLo, worldYHi\
-    , deviceName=None, widthInches=None, yOnXRatio=1.0, doPad=True, fixAspect=True):
+    , deviceName=None, widthInches=None, yOnXRatio=1.0, doPad=True, fixAspect=True\
+    , doGraphStyle=False):
+    # It is handy to have this separate method since on the one hand I prefer to pass around an instance rather than a class, and on the other it can be useful to postpone loading all the attributes.
+
+    self.worldXLo = worldXLo
+    self.worldXHi = worldXHi
+    self.worldYLo = worldYLo
+    self.worldYHi = worldYHi
 
     if deviceName is None:
       self.deviceName = self._defaultDeviceName
     else:
       self.deviceName = deviceName
 
-    if doPad:
-      (worldXLo, worldXHi, worldYLo, worldYHi) = plu.doPadLimits(worldXLo, worldXHi, worldYLo, worldYHi)
-
+    self.widthInches = widthInches
+    self.yOnXRatio   = yOnXRatio
     self.doPad = doPad
     self.fixAspect = fixAspect
-    self.worldXLo = worldXLo
-    self.worldXHi = worldXHi
-    self.worldYLo = worldYLo
-    self.worldYHi = worldYHi
+    self.doGraphStyle = doGraphStyle
+
+    if self.doPad:
+      (self.worldXLo, self.worldXHi, self.worldYLo, self.worldYHi)\
+        = plu.doPadLimits(self.worldXLo, self.worldXHi, self.worldYLo, self.worldYHi)
 
     devId = pgplot.pgopen(self.deviceName)
     self.plotDeviceIsOpened = True
+
     if not self.widthInches is None:
       pgplot.pgpap(self.widthInches, self.yOnXRatio)
 
@@ -168,7 +176,11 @@ class PgplotInterface:
       pgplot.pgscr(0,1.0,1.0,1.0)
       pgplot.pgscr(1,0.0,0.0,0.0)
 
-    pgplot.pgsvp(0.0,0.999,0.0,0.999)
+    if self.doGraphStyle:
+      pgplot.pgsvp(0.1,0.999,0.1,0.999)
+    else:
+      pgplot.pgsvp(0.0,0.999,0.0,0.999)
+
     if fixAspect:
       pgplot.pgwnad(worldXLo, worldXHi, worldYLo, worldYHi)
     else:
@@ -201,10 +213,11 @@ class PgplotInterface:
     if not self.plotDeviceIsOpened:
       raise ValueError("You have not yet opened a PGPLOT device.")
 
-    (x0,x1,y0,y1) = pgplot.pgqvsz(3)
-    pixelXSizeWorld = (self.worldXHi - self.worldXLo)/(x1 - x0)
-    pixelYSizeWorld = (self.worldYHi - self.worldYLo)/(y1 - y0)
-    return (pixelXSizeWorld, pixelYSizeWorld)
+#    (x0,x1,y0,y1) = pgplot.pgqvsz(3)
+#    pixelXSizeWorld = (self.worldXHi - self.worldXLo)/(x1 - x0)
+#    pixelYSizeWorld = (self.worldYHi - self.worldYLo)/(y1 - y0)
+#    return (pixelXSizeWorld, pixelYSizeWorld)
+    return (self.xPixelWorld, self.yPixelWorld)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def _setColourRepresentations(self):
@@ -313,11 +326,16 @@ class PgplotInterface:
     if not self.plotDeviceIsOpened:
       raise ValueError("You have not yet opened a PGPLOT device.")
 
+    if self.doGraphStyle:
+      opt = 'NT'
+    else:
+      opt = ''
+
     if withBox:
-      xOpt = 'BC'#NT'
-      yOpt = 'BC'#NT'
+      opt = 'BC'+opt
       pgplot.pgsci(1)
-      pgplot.pgbox(xOpt, 0.0, 0, yOpt, 0.0, 0)
+      pgplot.pgbox(opt, 0.0, 0, opt, 0.0, 0)
+
     pgplot.pgend()
 
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

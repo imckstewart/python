@@ -34,296 +34,25 @@ import ppgplot as pgplot
 import pgplot_interface as pgi
 import draw_widgets as drw
 import widgets
+import colourmap as cm
 
 
 #.......................................................................
-class HueGraph:
-  """
-This is an object for recording the relation between hue fraction and colour-index fraction. It behaves like a list of N tuples, each containing a pair (C,H) of floats; the first member of each pair is taken to be the CI fraction, the second is the hue fraction. Really the only reason for making it a class is to enforce certain rules, e.g. that N must be >1; that C must be 0 for the first pair and 1 for the last; that the C values must occur in non-descending order; and that H must be 0<=H<=1.
-  """
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, firstH=0.0, lastH=1.0):
-    if firstH<0.0 or firstH>1.0:
-      raise ValueError('Your firstH value %f is outside the range [0,1].' % (firstH))
-    if lastH<0.0 or lastH>1.0:
-      raise ValueError('Your lastH value %f is outside the range [0,1].' % (lastH))
-
-    self._firstH = firstH
-    self._lastH  = lastH
-    self._internalList = []
-    self._numPoints = 2+len(self._internalList)
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _checkCiValue(self, ciFrac, prevElementI, nextElementI, force=False):
-    prevTuple = self.__getitem__(prevElementI)
-    prevCiFrac = prevTuple[0]
-    if ciFrac<prevCiFrac:
-      if force:
-        return prevCiFrac
-      else:
-        raise ValueError('Your ciFrac %f should be >= the previous value %f.' % (ciFrac, prevCiFrac))
-
-    nextTuple = self.__getitem__(nextElementI)
-    nextCiFrac = nextTuple[0]
-    if ciFrac>nextCiFrac:
-      if force:
-        return nextCiFrac
-      else:
-        raise ValueError('Your ciFrac %f should be <= the subsequent value %f.' % (ciFrac, nextCiFrac))
-
-    return ciFrac
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _checkHueFrac(self, hueFrac, force=False):
-    if hueFrac<0.0:
-      if force:
-        return 0.0
-      else:
-        raise ValueError('Your hueFrac value %f is outside the range [0,1].' % (hueFrac))
-    if hueFrac>1.0:
-      if force:
-        return 1.0
-      else:
-        raise ValueError('Your hueFrac value %f is outside the range [0,1].' % (hueFrac))
-
-    return hueFrac
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def insert(self, elementToReplaceI, chTuple, force=False):
-    if elementToReplaceI<1 or elementToReplaceI>self._numPoints-1:
-      raise ValueError('%d is not a valid element replacement number.' % (elementToReplaceI))
-
-    (ciFrac, hueFrac) = chTuple
-
-    localCiFrac = self._checkCiValue(ciFrac, elementToReplaceI-1, elementToReplaceI, force)
-    localHueFrac = self._checkHueFrac(hueFrac, force)
-
-    self._internalList.insert(elementToReplaceI-1, (localCiFrac,localHueFrac))
-    self._numPoints = 2+len(self._internalList)
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def delete(self, elementI):
-    if elementI<1:
-      raise ValueError('You cannot delete the 1st element.')
-    if elementI>self._numPoints-1:
-      raise ValueError('You cannot delete the last element.')
-
-    self._internalList.pop(elementI-1)
-    self._numPoints = 2+len(self._internalList)
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __getitem__(self, elementI):
-    if elementI<0:
-      elementI = self._numPoints + elementI
-
-    if elementI<0 or elementI>self._numPoints-1:
-      raise ValueError('%d is not a valid element number.' % (elementI))
-
-    if elementI==0:
-      return (0.0,self._firstH)
-
-    if elementI==self._numPoints-1:
-      return (1.0,self._lastH)
-
-    return self._internalList[elementI-1]
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __setitem__(self, elementI, chTuple):
-    if elementI<0 or elementI>self._numPoints-1:
-      raise ValueError('%d is not a valid element number.' % (elementI))
-
-    (ciFrac, hueFrac) = chTuple
-    localHueFrac = self._checkHueFrac(hueFrac, force=True)
-
-    if   elementI==0:
-      self._firstH = localHueFrac
-    elif elementI==self._numPoints-1:
-      self._lastH = localHueFrac
-    else:
-      localCiFrac = self._checkCiValue(ciFrac, elementI-1, elementI+1, force=True)
-      self._internalList[elementI-1] = (localCiFrac,localHueFrac)
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def unpackValues(self):
-    cis  = nu.zeros([self._numPoints],nu.float)
-    hues = nu.zeros([self._numPoints],nu.float)
-    for i in range(self._numPoints):
-      (cis[i],hues[i]) = self.__getitem__(i)
-
-    return (cis,hues)
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def interpolate(self, ciFrac):
-    if ciFrac<0.0:
-      localCiFrac = 0.0
-    elif ciFrac>1.0:
-      localCiFrac = 1.0
-    else:
-      localCiFrac = ciFrac
-
-    i0 = 0 # default
-    for i in range(self._numPoints-2,0,-1):
-      # The sequence is N-2, N-3, ... , 2, 1. 0 is not reached.
-      if self.__getitem__(i)[0]<=localCiFrac:
-        i0 = i
-        break
-
-    (ciFrac0, hueFrac0) = self.__getitem__(i0)
-    (ciFrac1, hueFrac1) = self.__getitem__(i0+1)
-
-    hueFrac = hueFrac0 + (hueFrac1 - hueFrac0)*(localCiFrac - ciFrac0)/(ciFrac1 - ciFrac0)
-
-    return hueFrac
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def copy(self):
-    newHueGraph = HueGraph(self._firstH, self._lastH)
-    newHueGraph._internalList = self._internalList[:]
-    newHueGraph._numPoints = 2+len(newHueGraph._internalList)
-    return newHueGraph
-
-#.......................................................................
-class _Action:
-  """
-The purpose of the information stored in this class is to enable reconstruction of previous colourmaps.
-  """
-  _acceptedTypes = ['insert','delete','change']
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, hueI, elementI, typeStr, chTupleOld, chTupleNew):
-    if not typeStr in self._acceptedTypes:
-      raise ValueError('Type str %s not recognized.' % (typeStr))
-
-    self.hueI       = hueI
-    self.elementI   = elementI
-    self.typeStr    = typeStr
-    self.chTupleOld = chTupleOld
-    self.chTupleNew = chTupleNew
-
-#.......................................................................
-class InsertAction(_Action):
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, hueI, elementI, chTupleNew):
-    _Action.__init__(self, hueI, elementI, 'insert', None, chTupleNew)
-
-#.......................................................................
-class DeleteAction(_Action):
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, hueI, elementI, chTupleOld):
-    _Action.__init__(self, hueI, elementI, 'delete', chTupleOld, None)
-
-#.......................................................................
-class ChangeAction(_Action):
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, hueI, elementI, chTupleOld, chTupleNew):
-    _Action.__init__(self, hueI, elementI, 'change', chTupleOld, chTupleNew)
-
-#.......................................................................
-class ActionHistory:
-  """
-For this I want an object that behaves mostly like a list. However I need it to support successive 'undo' or 'redo' operations, and for that two additional variables are required: numUndoableActions and numRedoableActions.
-  """
-  _doTest=False
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self):
-    self.actionList = []
-    self.numUndoableActions = 0
-    self.numRedoableActions = 0
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def append(self, action):
-    # This is a little delicate, because we want to add actions to the list starting at self.numUndoableActions. This will only correspond to an unguarded append of self.actionList when the user has done no previous 'undo', i.e. if self.numRedoableActions==0.
-
-    if self._doTest:
-      print 'In ActionHistory.append().'
-
-    if self.numRedoableActions>0:
-      # Safest is to copy the whole truncated list.
-      self.actionList = self.actionList[:self.numUndoableActions]
-      if self._doTest:
-        print '  Copying existing actionList, new len=', len(self.actionList)
-
-    self.actionList.append(action)
-    if self._doTest:
-      print '  Appending to actionList, new len=', len(self.actionList)
-    self.numUndoableActions += 1
-    self.numRedoableActions = 0
-
-    if self._doTest:
-      print '  New values:'
-      print '  numUndoableActions=', self.numUndoableActions
-      print '  numRedoableActions=', self.numRedoableActions
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def getLast(self): # choose when undoing
-    if self._doTest:
-      print 'In ActionHistory.getLast(). Old values:'
-      print '  numUndoableActions=', self.numUndoableActions
-      print '  numRedoableActions=', self.numRedoableActions
-
-    if self.numUndoableActions<=0:
-      return None
-
-    self.numUndoableActions -= 1
-    self.numRedoableActions += 1
-
-    if self._doTest:
-      print '  New values:'
-      print '  numUndoableActions=', self.numUndoableActions
-      print '  numRedoableActions=', self.numRedoableActions
-
-    return self.actionList[self.numUndoableActions]
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def getNext(self): # choose when redoing
-    if self._doTest:
-      print 'In ActionHistory.getNext(). Old values:'
-      print '  numUndoableActions=', self.numUndoableActions
-      print '  numRedoableActions=', self.numRedoableActions
-
-    if self.numRedoableActions<=0:
-      return None
-
-    self.numUndoableActions += 1
-    self.numRedoableActions -= 1
-
-    if self._doTest:
-      print '  New values:'
-      print '  numUndoableActions=', self.numUndoableActions
-      print '  numRedoableActions=', self.numRedoableActions
-
-    return self.actionList[self.numUndoableActions-1]
-
-#.......................................................................
-class ColourMap:
-  _defaultRedFirstHue = 0.0
-  _defaultGrnFirstHue = 0.0
-  _defaultBluFirstHue = 0.0
-  _defaultRedLastHue = 1.0
-  _defaultGrnLastHue = 1.0
-  _defaultBluLastHue = 1.0
-  _numHues = 3
-
+class ColourMapCallbacks:
   # used for point selection purposes:
   _minCiFrac  = 0.02
   _minHueFrac = 0.02
 
-  _hueNames = ['red','grn','blu']
-  _numHues = len(_hueNames)
-
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self):
-    self.hueGraphs = []
-    self.hueGraphs.append(HueGraph(self._defaultRedFirstHue, self._defaultRedLastHue))
-    self.hueGraphs.append(HueGraph(self._defaultGrnFirstHue, self._defaultGrnLastHue))
-    self.hueGraphs.append(HueGraph(self._defaultBluFirstHue, self._defaultBluLastHue))
+  def __init__(self, colourMap=None):
+    if colourMap is None:
+      self.cm = cm.ColourMap()
+    else:
+      self.cm = colourMap
 
 #    self.pointHighlighted = [None,None,None]
     self.selectedHueI = None # valid when clickEvent.showLine==True
     self.selectedElementI = None # valid when clickEvent.showLine==True
-
-    self.actionHistory = ActionHistory()
 
     # The following are set in self.initialize(widget), which should be called after the gui is constructed but before anything else:
     self.minAvailCI = None
@@ -358,24 +87,6 @@ class ColourMap:
     gui.plotter.lowLevelPlotter.setColour('white')
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _undo(self, action):
-    if   action.typeStr=='insert':
-      self.hueGraphs[action.hueI].delete(action.elementI)
-    elif action.typeStr=='delete':
-      self.hueGraphs[action.hueI].insert(action.elementI, action.chTupleOld)
-    else: # assume action.typeStr=='change':
-      self.hueGraphs[action.hueI][action.elementI] = action.chTupleOld
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _redo(self, action):
-    if   action.typeStr=='insert':
-      self.hueGraphs[action.hueI].insert(action.elementI, action.chTupleNew)
-    elif action.typeStr=='delete':
-      self.hueGraphs[action.hueI].delete(action.elementI)
-    else: # assume action.typeStr=='change':
-      self.hueGraphs[action.hueI][action.elementI] = action.chTupleNew
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def _redrawHueGraph(self, hueI, widget, tupleToErase=None):
     oldFill = widget.gui.plotter.lowLevelPlotter.getFill()
     oldColour = widget.gui.plotter.lowLevelPlotter.getColour()
@@ -395,7 +106,7 @@ class ColourMap:
 
     # Now draw the points and lines:
     widget.gui.plotter.lowLevelPlotter.setColour('white')
-    (xs,ys) = self.hueGraphs[hueI].unpackValues()
+    (xs,ys) = self.cm.hueGraphs[hueI].unpackValues()
     xs = widget.ranges[0].lo*(1.0 - xs) + widget.ranges[0].hi*xs
     ys = widget.ranges[1].lo*(1.0 - ys) + widget.ranges[1].hi*ys
     pgplot.pgline(xs, ys)
@@ -419,9 +130,9 @@ class ColourMap:
       xHi = widget.ranges[0].lo*(1.0 - xFracHi) + widget.ranges[0].hi*xFracHi
 
       ciFrac = (ci + 0.5 - self.minAvailCI)/(self.maxAvailCI + 1 - self.minAvailCI)
-      red = self.hueGraphs[0].interpolate(ciFrac)
-      grn = self.hueGraphs[1].interpolate(ciFrac)
-      blu = self.hueGraphs[2].interpolate(ciFrac)
+      red = self.cm.hueGraphs[0].interpolate(ciFrac)
+      grn = self.cm.hueGraphs[1].interpolate(ciFrac)
+      blu = self.cm.hueGraphs[2].interpolate(ciFrac)
       pgplot.pgscr(ci, red, grn, blu)
 
       widget.gui.plotter.lowLevelPlotter.setColour(ci)
@@ -433,8 +144,8 @@ class ColourMap:
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawAll(self, gui):
 #*** could maybe also set the min ciFrac and hueFrac distances (used for point selection purposes) to suit the canvas dimensions?
-    for hueI in range(self._numHues):
-      widget = gui._widgetDict[self._hueNames[hueI]]
+    for hueI in range(self.cm._numHues):
+      widget = gui._widgetDict[self.cm._hueNames[hueI]]
       self._redrawHueGraph(hueI, widget)
 
     widget = gui._widgetDict['colourbar']
@@ -459,8 +170,8 @@ Find the point with the closest CH position to the one given, and find the point
     (x0,y0) = chTuple
     x0 = max(0.0,min(1.0,x0))
     nextHighestElementI = None # default
-    for i in range(self.hueGraphs[hueI]._numPoints):
-      (x,y) = self.hueGraphs[hueI][i]
+    for i in range(self.cm.hueGraphs[hueI]._numPoints):
+      (x,y) = self.cm.hueGraphs[hueI][i]
       deltaX = (x - x0)/self._minCiFrac
       deltaY = (y - y0)/self._minHueFrac
       distSquared = deltaX*deltaX + deltaY*deltaY
@@ -477,28 +188,34 @@ Find the point with the closest CH position to the one given, and find the point
       # If we got here, means no close element was found.
       closeElementI = None
       if nextHighestElementI is None: # only possible here if x0==1.0.
-        nextHighestElementI = self.hueGraphs[hueI]._numPoints - 1
+        nextHighestElementI = self.cm.hueGraphs[hueI]._numPoints - 1
 
     return (closeElementI, nextHighestElementI)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def _checkUndoRedoEnabling(self, gui):
     undoButton = gui._widgetDict['undo']
-    if self.actionHistory.numUndoableActions>0:
+    if self.cm.actionHistory.numUndoableActions>0:
       undoButton.changeEnableState(True)
     else:
       undoButton.changeEnableState(False)
 
     redoButton = gui._widgetDict['redo']
-    if self.actionHistory.numRedoableActions>0:
+    if self.cm.actionHistory.numRedoableActions>0:
       redoButton.changeEnableState(True)
     else:
       redoButton.changeEnableState(False)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _changeButtonStatesWhileDragging(self, gui, amDragging):
-    for btnStr in ['cancel','delete']:
+  def _changeButtonStatesWhileDragging(self, gui, amDragging, pointIsDeletable=True):
+#    for btnStr in ['cancel','delete']:
+    for btnStr in ['cancel']:
       gui._widgetDict[btnStr].changeEnableState(amDragging)
+
+    if amDragging and pointIsDeletable:
+      gui._widgetDict['delete'].changeEnableState(True)
+    else:
+      gui._widgetDict['delete'].changeEnableState(False)
 
     for btnStr in ['save','load']:
       gui._widgetDict[btnStr].changeEnableState(not amDragging)
@@ -513,8 +230,8 @@ Find the point with the closest CH position to the one given, and find the point
   def _canvasCallback(self, hueI, widget, clickEvent):
     """
 In general this routine has to accomplish the following things:
-	- Make an appropriate change to self.hueGraphs[hueI].
-	- Record that change in self.actionHistory
+	- Make an appropriate change to self.cm.hueGraphs[hueI].
+	- Record that change in self.cm.actionHistory
 	- Redraw the hue graph.
 	- Enable/disable the undo/redo buttons as appropriate.
 	- Set/Unset clickEvent.showLine as appropriate.
@@ -527,18 +244,19 @@ One of the following actions may happen:
 	* clickEvent.showLine==False and we are 'far' from an existing point. Insert a new point.
     """
 
+    newClickEvent = clickEvent.copy()
+
     chTupleNew = self._canvasXYToCH(hueI, widget, clickEvent)
     tupleToErase = None # default
 
-    newClickEvent = clickEvent.copy()
-
     if newClickEvent.showLine: # means we are dragging a point and have just clicked on the place where we want it dragged to.
       self._changeButtonStatesWhileDragging(widget.gui, False)
+#      widget.gui._widgetDict['delete'].changeEnableState(False) # cannot delete first or last points.
 
       if hueI==self.selectedHueI:
-        chTupleOld = self.hueGraphs[hueI][self.selectedElementI]
+        chTupleOld = self.cm.hueGraphs[hueI][self.selectedElementI]
 
-        if self.selectedElementI==0 or self.selectedElementI==self.hueGraphs[hueI]._numPoints-1:
+        if self.selectedElementI==0 or self.selectedElementI==self.cm.hueGraphs[hueI]._numPoints-1:
           if self.selectedElementI==0:
             chTupleNew = (0.0, chTupleNew[1])
           else:
@@ -546,9 +264,9 @@ One of the following actions may happen:
 
           tupleToErase = chTupleOld
 
-        self.hueGraphs[hueI][self.selectedElementI] = chTupleNew
-        action = ChangeAction(hueI, self.selectedElementI, chTupleOld, chTupleNew)
-        self.actionHistory.append(action)
+        self.cm.hueGraphs[hueI][self.selectedElementI] = chTupleNew
+        action = cm.ChangeAction(hueI, self.selectedElementI, chTupleOld, chTupleNew)
+        self.cm.actionHistory.append(action)
 
         newClickEvent.showLine = False
 
@@ -568,14 +286,19 @@ One of the following actions may happen:
         self.selectedElementI = closeElementI
         newClickEvent.showLine = True ### maybe also reset the csr x,y to the exact centre of the point?
 
-        self._changeButtonStatesWhileDragging(widget.gui, True)
+        if closeElementI>0 and closeElementI<self.cm.hueGraphs[hueI]._numPoints-1:
+          pointIsDeletable = True
+        else:
+          pointIsDeletable = False # cannot delete first or last points.
+
+        self._changeButtonStatesWhileDragging(widget.gui, True, pointIsDeletable)
 
         return newClickEvent# no redraw of either the hue graph or colour bar.
 
       else: # We are not. Insert a new point.
-        self.hueGraphs[hueI].insert(nextHighestElementI, chTupleNew)
-        action = InsertAction(hueI, nextHighestElementI, chTupleNew)
-        self.actionHistory.append(action)
+        self.cm.hueGraphs[hueI].insert(nextHighestElementI, chTupleNew)
+        action = cm.InsertAction(hueI, nextHighestElementI, chTupleNew)
+        self.cm.actionHistory.append(action)
 
     self._checkUndoRedoEnabling(widget.gui)
 
@@ -599,18 +322,18 @@ One of the following actions may happen:
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def undoCallback(self, undoBtnWidget, clickEvent):
-    action = self.actionHistory.getLast()
+    action = self.cm.actionHistory.getLast()
 
     if action.typeStr=='change':
       tupleToErase = action.chTupleNew
     else:
       tupleToErase = None
 
-    self._undo(action)
+    self.cm._undo(action)
     self._checkUndoRedoEnabling(undoBtnWidget.gui)
 
     # Display the altered graph+colourbar:
-    hueGraphWidget = undoBtnWidget.gui._widgetDict[self._hueNames[action.hueI]]
+    hueGraphWidget = undoBtnWidget.gui._widgetDict[self.cm._hueNames[action.hueI]]
     self._redrawHueGraph(action.hueI, hueGraphWidget, tupleToErase)
     self._redrawColourBar(undoBtnWidget.gui._widgetDict['colourbar'])
 
@@ -618,18 +341,18 @@ One of the following actions may happen:
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def redoCallback(self, redoBtnWidget, clickEvent):
-    action = self.actionHistory.getNext()
+    action = self.cm.actionHistory.getNext()
 
     if action.typeStr=='change':
       tupleToErase = action.chTupleOld
     else:
       tupleToErase = None
 
-    self._redo(action)
+    self.cm._redo(action)
     self._checkUndoRedoEnabling(redoBtnWidget.gui)
 
     # Display the altered graph+colourbar:
-    hueGraphWidget = redoBtnWidget.gui._widgetDict[self._hueNames[action.hueI]]
+    hueGraphWidget = redoBtnWidget.gui._widgetDict[self.cm._hueNames[action.hueI]]
     self._redrawHueGraph(action.hueI, hueGraphWidget, tupleToErase)
     self._redrawColourBar(redoBtnWidget.gui._widgetDict['colourbar'])
 
@@ -639,28 +362,29 @@ One of the following actions may happen:
   def cancelCallback(self, canBtnWidget, clickEvent):
     # This button should be enabled only after a hue/element has been selected by a mouse click near a symbol in the appropriate hue canvas. Basically it just unselects the hue/element, returns to default cursor mode and disables the 'delete' and 'cancel' buttons.
 
+    newClickEvent = clickEvent.copy()
+
+    self._changeButtonStatesWhileDragging(canBtnWidget.gui, False)
+
     self.selectedHueI = None
     self.selectedElementI = None
-    canBtnWidget.changeEnableState(False)
-    canBtnWidget.gui._widgetDict['delete'].changeEnableState(False)
+    newClickEvent.showLine = False
 
-    clickEvent.showLine = False
-
-    return clickEvent
+    return newClickEvent
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def deleteCallback(self, delBtnWidget, clickEvent):
-    chTupleOld = self.hueGraphs[self.selectedHueI][self.selectedElementI]
+    chTupleOld = self.cm.hueGraphs[self.selectedHueI][self.selectedElementI]
 
     # Perform the action:
-    self.hueGraphs[self.selectedHueI].delete(self.selectedElementI)
+    self.cm.hueGraphs[self.selectedHueI].delete(self.selectedElementI)
 
     # Record the action:
-    action = DeleteAction(self.selectedHueI, self.selectedElementI, chTupleOld)
-    self.actionHistory.append(action)
+    action = cm.DeleteAction(self.selectedHueI, self.selectedElementI, chTupleOld)
+    self.cm.actionHistory.append(action)
 
     # Display the altered graph+colourbar:
-    hueGraphWidget = delBtnWidget.gui._widgetDict[self._hueNames[self.selectedHueI]]
+    hueGraphWidget = delBtnWidget.gui._widgetDict[self.cm._hueNames[self.selectedHueI]]
     self._redrawHueGraph(self.selectedHueI, hueGraphWidget)
     self._redrawColourBar(delBtnWidget.gui._widgetDict['colourbar'])
 
@@ -669,112 +393,33 @@ One of the following actions may happen:
     return self.cancelCallback(canBtnWidget, clickEvent)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _gotEqExp(self, gotStr, expStr, fh):
-    if gotStr==expStr:
-      return True
-    else:
-      print 'Expected %s got %s' % (expStr, gotStr)
-      fh.close()
-      return False
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _loadMap(self, fileName):
-    success = False # default
-
-    tempHueGraphs = []
-
-    fh = open(fileName, 'r')
-    for hueI in range(self._numHues):
-      hueStr = self._hueNames[hueI]
-      hue = self.hueGraphs[hueI]
-
-      line = fh.readline()
-      [gotStr, gotHueStr] = line[:-1].split('=') #**** should test first that there are 2 fields
-      if not self._gotEqExp(gotStr, 'hue', fh): return False
-      if not self._gotEqExp(gotHueStr, hueStr, fh): return False
-
-      line = fh.readline()
-      [gotStr, firstStr] = line[:-1].split('=') #**** should test first that there are 2 fields
-      if not self._gotEqExp(gotStr, 'first', fh): return False
-      first = float(firstStr)
-
-      line = fh.readline()
-      [gotStr, lastStr] = line[:-1].split('=') #**** should test first that there are 2 fields
-      if not self._gotEqExp(gotStr, 'last', fh): return False
-      last = float(lastStr)
-
-      tempHueGraphs.append(HueGraph(first, last))
-
-      line = fh.readline()
-      [gotStr, numStr] = line[:-1].split('=') #**** should test first that there are 2 fields
-      if not self._gotEqExp(gotStr, 'num', fh): return False
-      numInternalHues = int(numStr)
-
-      for i in range(numInternalHues):
-        line = fh.readline()
-        fields = line[:-1].split(' ')
-        if len(fields)!=2:
-          print 'Expected 2 space-separated float fields but the line is %s' % (line[:-1])
-          fh.close()
-          return False
-
-        cf = float(fields[0])
-        hf = float(fields[1])
-        tempHueGraphs[hueI].insert(i+1, (cf, hf))
-
-    fh.close()
-
-    self.hueGraphs = []
-    for hueI in range(self._numHues):
-      self.hueGraphs.append(tempHueGraphs[hueI])
-
-    return True
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def loadCallback(self, loadButtonWidget, clickEvent):
     fileName = raw_input("Load colourmap from file:")
     if not os.path.isfile(fileName):
       print 'Could not find a file %s' % (fileName)
       return clickEvent
 
-    if not self._loadMap(fileName):
+    if not self.cm._loadMap(fileName):
       print 'Could not load the colourmap.'
       return clickEvent
 
     # Wipe the action history:
-    self.actionHistory = ActionHistory() # in a way it would be nice if we could store (and thus reload) the action history too.
+    self.cm.actionHistory = cm.ActionHistory() # in a way it would be nice if we could store (and thus reload) the action history too.
 
     self._checkUndoRedoEnabling(loadButtonWidget.gui)
 
     # Display the altered graph+colourbar:
-    for hueI in range(self._numHues):
-      hueGraphWidget = loadButtonWidget.gui._widgetDict[self._hueNames[hueI]]
+    for hueI in range(self.cm._numHues):
+      hueGraphWidget = loadButtonWidget.gui._widgetDict[self.cm._hueNames[hueI]]
       self._redrawHueGraph(hueI, hueGraphWidget)
     self._redrawColourBar(loadButtonWidget.gui._widgetDict['colourbar'])
 
     return clickEvent
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _saveMap(self, fileName):
-    fh = open(fileName, 'w')
-    for hueI in range(self._numHues):
-      hueStr = self._hueNames[hueI]
-      hue = self.hueGraphs[hueI]
-
-      fh.write('hue=%s\n' % (hueStr))
-      fh.write('first=%f\n' % (hue._firstH))
-      fh.write('last=%f\n'  % (hue._lastH))
-      numInternalHues = len(hue._internalList)
-      fh.write('num=%d\n'  % (numInternalHues))
-      for i in range(numInternalHues):
-        fh.write('%f %f\n'  % (hue._internalList[i][0], hue._internalList[i][1]))
-
-    fh.close()
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def saveCallback(self, saveButtonWidget, clickEvent):
     fileName = raw_input("Save colourmap to file:")
-    self._saveMap(fileName)
+    self.cm._saveMap(fileName)
     print 'Saved.'
     return clickEvent
 
@@ -808,7 +453,7 @@ class ModifiedLowLevelPlotter(pgi.PgplotInterface):
 
 
 
-colourMap = ColourMap()
+colourMap = ColourMapCallbacks()
 
 def exitFn(widgetObj, clickEvent):
   widgetObj.gui.plotter.cursorHandler.exitWasChosen = True

@@ -988,7 +988,7 @@ class GUI(Frame):
   isGuiFrame = True
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, name, sizes, plotter, isEnabled=True, bgColour=None\
+  def __init__(self, name, sizes, plotter=None, isEnabled=True, bgColour=None\
     , innerBufferFrac=None, childSequenceDir=1, alongJustify='spread'\
     , crossJustify='centre', defaultCallbackFunction=None, userInitialFunction=None, debug=False):
 
