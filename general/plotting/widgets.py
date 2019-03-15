@@ -24,16 +24,20 @@
 """
 This module sets up classes to allow the construction of a tree of simple 'widgets'.
 
+Widgets are conceived to be objects arranged in a tree. Each widget thus has a single parent, except the root widget, which has none. Each widget may have 0 or more children.
+
+Note that, although it is assumed that widgets are rectangular (strictly speaking, orthotopes), spatially nested, and that each is to be associated with an image as part of a graphical user interface, the spatial extents and locations of each widget are taken care of by routines in module widgeometry, and the drawing of widgets is performed in module draw_widgets.
+
 How to use the API:
 ===================
-The first class to be instantiated must be 'GUI'. After that, other non-abstract classes (i.e. those whose names don't begin with an underscore) may be instantiated. Each of the non-GUI classes requires a parent, which must be either the GUI instance or an instance of class 'Frame'. Many of the widgets can be supplied with a callback function of the user's choice, which is called if the widget is selected. After all the widgets have been instantiated, the final step is to call the 'GUI' instance. A schematic for use of these classes is as follows:
+The first class to be instantiated must be 'GUI'. After that, other non-abstract classes (i.e. those whose names don't begin with an underscore) may be instantiated. Each of the non-GUI classes requires a parent, which must be either the GUI instance or an instance of class 'Frame'. Many of the widget types can be supplied with a callback function of the user's choice, which is called if the widget is selected (usually, it will be assumed, by clicking on it with the mouse). After all the widgets have been instantiated, the final step is to call the 'GUI' instance. A schematic for use of these classes is as follows:
 
   # Construct plotterObject
 
-  sizes = [Size(<args>),Size(<args>)]
-  mygui = GUI('demo gui', sizes, plotterObject)
-  sizes = [Size(<args>),Size(<args>)]
-  somewidget = <widget class>(gui, <name>, sizes, <etc>)
+  sizeSpecs = [Size(<args>),Size(<args>)]
+  mygui = GUI('demo gui', sizeSpecs, plotterObject)
+  sizeSpecs = [Size(<args>),Size(<args>)]
+  somewidget = <widget class>(gui, <name>, sizeSpecs, <etc>)
   . . .
   mygui()
 
@@ -99,22 +103,6 @@ Each 'active' widget may be given a callback function (CBF) at time of instantia
 
 If the cursor position at time of mouse click falls within a Frame, but either not within any of the children, or the child it falls within returns None, then the Frame's default CBF is actuated. If the user supplied no default CBF for the Frame, the Frame also returns None to its own parent Frame.
 
-Widget geometry:
-================
-The size and placement of any widget depends on other widgets, because widget overlap should be avoided, so they kind of jostle one another for space. The basic relationship to keep in mind is between a Frame object and its children. The root-level GUI is a Frame object, so this applies right from the beginning. Since any child can also be a Frame, and thus have children of its own, the whole thing propagates down as far as the levels go.
-
-Children within a frame may only be arranged in a row. This row may be vertical or horizontal; the choice is made at instantiation of the Frame, via the 'childSequenceDir' argument. A value of 0 means horizontal, 1 means vertical.
-
-Sizes:
-......
-The size of a widget may be expressly given at its instantiation, but if there are many widgets it can be difficult to calculate all the sizes a priori, particularly taking into account the padding (see later this section). For this reason, three possible size descriptions for each axis are possible at instantiation. These are given in the class attribute Size.possibleDemandStates as 'exact', 'shrinkToFit' and 'expandToFit'. The first of these, 'exact', allows the user to provide the size they want. The second says, make the widget as small as possible provided that it still fits the maximum combined size of its children. The third says, make the widget as large as possible consistent with the size of its Frame. There are a few caveats, i.e choices excluded that make no sense: one cannot choose 'shrinkToFit' for either axis of a non-Frame widget (i.e., a widget which cannot have children), and one cannot choose 'expandToFit' if the parent Frame already is 'shrinkToFit' in the same axis. The parent GUI also may not be 'expandToFit' in either axis.
-
-If the Frame is not 'shrinkToFit' and none of the children is 'expandToFit' then there may be space left in the Frame on that axis. The arrangement of the children in this case is specified by the 'alongJustify' and 'crossJustify' arguments at instantiation of a Frame. 'alongJustify' deals with the arrangements in the sequence direction of the children, 'crossJustify' for the arrangement normal to that. Possible values of the first are 'leftOrDown', 'rightOrUp', 'centre' and 'spread'; the crossJustify possibilities omit 'spread', since this makes no sense.
-
-Padding:
-........
-Each widget occupies a rectangular area, and its 'size' means just the extent of this area. After the locations of the edges of this rectangle are calculated, they are stored in _Widget.ranges, which is a list of 2 ranges.Range objects, for X and Y axes respectively. To avoid widgets rubbing shoulders as it were, some extra (invisible) padding is provided. On each axis, an external pad can be defined for each widget. The space between two adjacent child widgets A and B is not permitted to be less than (A.outerBuffer[n]+B.outerBuffer[n])/2, where 'n' is either 0 or 1 for the axis in question. There is in addition an inner buffer which only has effect for Frame objects. The closest a widget can approach its parent Frame is Frame.innerBuffer[n]/2.
-
 User input:
 ===========
 What happens when the user clicks somewhere inside the GUI window? There are three possibilities: one of the user's callback functions (CBFs) is activated, one of the user's empty-margin or default CBFs for Frame objects is activated, or the module's own 'do-nothing' CBF is activated. Which of these occurs depends on a complicated set of conditions which are best described via a flowchart, given below, which describes the decision tree as it effects a Frame object (which is the only widget which may physically enclose other 'child' widgets) and its children. The end result of this tree is the value returned to its parent by the Frame object.
@@ -159,7 +147,7 @@ _module_name = 'widgets'
 import time
 
 import my_exceptions as ex
-import ranges as ra
+import widgeometry as wge
 
 importDrawWentOk = False # default
 try:
@@ -169,20 +157,60 @@ except:
   pass
 
 _dirStrs = ['X','Y']
+HORIZONTAL = 0
+VERTICAL   = 1
 
 #.......................................................................
-class Size:
-  possibleDemandStates = ['shrinkToFit','exact','expandToFit']
+def defaultExitFn(widgetObj, clickEvent):
+  widgetObj.rootWidget.plotter.cursorHandler.exitWasChosen = True
+  return clickEvent
 
-  def __init__(self, spaceDemand, size=None):
-    if not spaceDemand in self.possibleDemandStates:
-      raise ValueError('Demand state %s is not recognized.' % (spaceDemand))
+#.......................................................................
+class Size(wge.WidgetSize):
+  """
+This subclasses wge.WidgetSize in order to define some minimum buffer distances.
+  """
+  _defaultOuterBuffer = wge.Buffer(0.01)
+  _defaultInnerBuffer = wge.Buffer(0.01)
+  def __init__(self, spaceDemand, maxExtent=None, outerBuffer=None\
+    , innerBuffer=None, childrenJustify='spread'):
 
-    if spaceDemand=='exact' and size is None:
-      raise ValueError('You must provide a size if you specify exact.')
+    if innerBuffer is None:
+      localInnerBuffer = self._defaultInnerBuffer
+    else:
+      localInnerBuffer = innerBuffer
 
-    self.spaceDemand = spaceDemand
-    self.size = size
+    if outerBuffer is None:
+      localOuterBuffer = self._defaultOuterBuffer
+    else:
+      localOuterBuffer = outerBuffer
+
+    wge.WidgetSize.__init__(self, spaceDemand, maxExtent, localOuterBuffer\
+      , localInnerBuffer, childrenJustify)
+
+
+#.......................................................................
+class Children:
+  """
+This bundles together a list of 'child' _Widget objects with the axis along which they are to be arrayed.
+  """
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def __init__(self, childList=[], childSequenceDir=0):
+    self.childList = childList
+    self.childSequenceDir = childSequenceDir
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def __str__(self, spaces=''):
+    myStr  = spaces+'< %s object.\n' % (self.__class__.__name__)
+    myStr += spaces+'  seq dir = %d\n' % (self.childSequenceDir)
+    if len(self.childList)<1:
+      myStr += spaces+'  Zero children\n'
+    else:
+      myStr += spaces+'  Children:\n'
+      for child in self.childList:
+        myStr += spaces+'    %s\n' % (child.name)
+
+    return myStr + spaces+'>'
 
 #.......................................................................
 class _TextWidget:
@@ -190,65 +218,32 @@ class _TextWidget:
   def __init__(self, text):
     self.text = text
 
-
 #.......................................................................
 class _Widget:
-  _outerBufferFrac = [0.025,0.025]
-  _innerBufferFrac = [0.025,0.025]
-  isFrame = False # the default
-  isGuiFrame = False # the default
+  _numAxes = 2
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def __init__(self, parent, name, sizes, isTransparent, isEnabled\
     , bgColour, disabledBgColour, inkColour, disabledInkColour\
-    , innerBufferFrac, outerBufferFrac):
+    , childSequenceDir=None):
     # 'parent' must either be an instance of class Frame, or None.
-    # 'sizes' must be a list with 2 elements (one for each axis), each being an instance of class Size.
+    # 'sizeSpecs' must be a list with 2 elements (one for each axis), each being an instance of class wge.WidgetSize.
 
-    self.parent = parent # Must be a Frame object or subclass thereof; or None for the outermost GUI window.
-    if not parent is None and name in parent.gui._widgetDict.keys():
+    self.parent = parent # Must be a Frame object or subclass thereof; or None if this widget is the outermost GUI window.
+    if not parent is None and name in parent.rootWidget._widgetDict.keys():
       raise ValueError('Name %s is already taken by another widget.' % (name))
-    self.name = name
 
-    self.spaceDemand = []
-    self.size = []
-    for i in range(2):
-      if not self.isFrame and sizes[i].spaceDemand=='shrinkToFit':
-        raise ValueError("You can't choose 'shrinkToFit' for a non-Frame object")
-      self.spaceDemand.append(sizes[i].spaceDemand)
-      self.size.append(sizes[i].size)
+    self.name          = name
+    self.sizes         = sizes
+    if len(self.sizes)!=self._numAxes:
+       raise ValueError("You need to provide %d elements in the list 'sizes', not %d" % (self._numAxes, len(self.sizes)))
 
     self.isTransparent = isTransparent
 
-    if not innerBufferFrac is None:
-      self._innerBufferFrac = innerBufferFrac[:]#********* should not change class attributes.
-
-    if not outerBufferFrac is None:
-      self._outerBufferFrac = outerBufferFrac[:]
-
-    # The following are not set until we know the size of the outermost GUI frame.
-    self.innerBuffer = [None,None]
-    self.outerBuffer = [None,None]
-
-    if self.parent is None:
-      self.gui = self # this actually works as desired, i.e. the 'self' is an instance of Button, Frame or whatever, not of bare _Widget.
+    if self.parent is None or self.parent.isEnabled:
       self.isEnabled = isEnabled
     else:
-      for xOrY in [0,1]:
-        if self.parent.spaceDemand[xOrY]=='shrinkToFit' and self.spaceDemand[xOrY]=='expandToFit':
-          raise ValueError("Parent % space demand is 'shrinkToFit', so this widget may not demand 'expandToFit'." % (_dirStrs[xOrY]))
-
-      self.gui = parent.gui
-
-      if not parent.isFrame:
-        raise ValueError('Parent object is not a Frame.')
-
-      self.parent._append(self) # this actually works as desired, i.e. the 'self' is an instance of Button, Frame or whatever, not of bare _Widget.
-
-      if self.parent.isEnabled:
-        self.isEnabled = isEnabled
-      else:
-        self.isEnabled = False # we don't allow a child to be enabled if the parent is not.
+      self.isEnabled = False # we don't allow a child to be enabled if the parent is not.
 
     # These can be None; the plotting routines should be able to handle this.
     self.bgColour          = bgColour
@@ -256,15 +251,30 @@ class _Widget:
     self.inkColour         = inkColour
     self.disabledInkColour = disabledInkColour
 
+    if childSequenceDir is None:
+      self.children = None
+    else:
+      self.children = Children([], childSequenceDir)
+
+    if self.parent is None:
+      self.rootWidget = self
+    else:
+      self.rootWidget = self.parent.rootWidget
+      if self.parent.children is None: # not ideal - you should set up the parent widget to be a Frame by supplying it with a non-None childSequenceDir when instantiating.
+        self.parent.children = Children([self])
+      else:
+        self.parent.children.childList.append(self)
+      # These actually work as desired, i.e. the 'self' is an instance of Button, Frame or whatever, not of bare _Widget.
+
+      self.parent.rootWidget._widgetDict[self.name] = self
+
     self._colours = [\
        {'BG':self.bgColour}\
       ,{'Disabled-BG':self.disabledBgColour}\
       ,{'FG':self.inkColour}\
       ,{'Disabled-FG':self.disabledInkColour}]
 
-    # These are set when the gui is finally run, after the dependency tree is constructed.
-    self.ranges = [None,None]
-    self.childList = []
+    # This is set when the gui is finally run, after the dependency tree is constructed.
     self.redraw = True # if False, just draw the things which will change with user action (e.g. mouse clicks)
 
     self.widgetPlotter = None
@@ -273,7 +283,7 @@ class _Widget:
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def contains(self, x, y):
-    if self.ranges[0].contains(x) and self.ranges[1].contains(y):
+    if self.sizes[0].range.contains(x) and self.sizes[1].range.contains(y):
       return True
     else:
       return False
@@ -309,50 +319,53 @@ class _Widget:
       clrStr = self._colours[i].keys()[0]
       colour = self._colours[i][clrStr]
 
-      if not colour is None and not self.gui.plotter.checkColour(colour):
+      if not colour is None and not self.rootWidget.plotter.checkColour(colour):
         raise ValueError('%s colour %s is not recognized by the plotter.' % (clrStr, colour))
 
-    for child in self.childList:
+    if self.children is None:
+      return
+
+    for child in self.children.childList:
       child.checkColoursChildren()
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def __str__(self, spaces=''):
     myStr  = spaces+'< %s object.\n' % (self.__class__.__name__)
     myStr += spaces+'  name = %s\n' % (self.name)
-    if self.ranges[0] is None:
+    if self.sizes[0].range is None:
       myStr += spaces+'  .xLo = None\n'
       myStr += spaces+'  .xHi = None\n'
     else:
-      myStr += spaces+'  .xLo = %e\n' % (self.ranges[0].lo)
-      myStr += spaces+'  .xHi = %e\n' % (self.ranges[0].hi)
+      myStr += spaces+'  .xLo = %e\n' % (self.sizes[0].range.lo)
+      myStr += spaces+'  .xHi = %e\n' % (self.sizes[0].range.hi)
 
-    if self.ranges[1] is None:
+    if self.sizes[1].range is None:
       myStr += spaces+'  .yLo = None\n'
       myStr += spaces+'  .yHi = None\n'
     else:
-      myStr += spaces+'  .yLo = %e\n' % (self.ranges[1].lo)
-      myStr += spaces+'  .yHi = %e\n' % (self.ranges[1].hi)
+      myStr += spaces+'  .yLo = %e\n' % (self.sizes[1].range.lo)
+      myStr += spaces+'  .yHi = %e\n' % (self.sizes[1].range.hi)
 
 #### more work on this
 
-    for child in self.childList:
-      myStr += child.__str__(spaces+'  ')+'\n'
+    if not self.children is None:
+      for child in self.children.childList:
+        myStr += child.__str__(spaces+'  ')+'\n'
 
     return myStr + spaces+'>'
 
 #.......................................................................
 class _PassiveWidget(_Widget):
-  """
-A _PassiveWidget object has no callback function.
-  """
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, isTransparent, isEnabled\
-    , bgColour, disabledBgColour, inkColour, disabledInkColour\
-    , innerBufferFrac, outerBufferFrac):
+  # A _PassiveWidget object has no callback function.
 
-    _Widget.__init__(self, parent, name, sizes, isTransparent, isEnabled\
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def __init__(self, parent, name, sizeSpecs, isTransparent, isEnabled\
+    , bgColour, disabledBgColour, inkColour, disabledInkColour\
+    , childSequenceDir=None):
+
+    _Widget.__init__(self, parent, name, sizeSpecs, isTransparent, isEnabled\
       , bgColour, disabledBgColour, inkColour, disabledInkColour\
-      , innerBufferFrac, outerBufferFrac)
+      , childSequenceDir)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def doOnMouseClick(self, lastClickEvent):
@@ -360,19 +373,18 @@ A _PassiveWidget object has no callback function.
 
 #.......................................................................
 class _ClickableWidget(_Widget):
-  """
-An _ClickableWidget object has a callback function (although this can be None, in which case the default is used). I'm also assuming that such objects are non-transparent.
-  """
+  # A _ClickableWidget object has a callback function (although this can be None, in which case the default is used). I'm also assuming that such objects are non-transparent.
+
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, callbackFunction, redrawOnClick\
+  def __init__(self, parent, name, sizeSpecs, callbackFunction, redrawOnClick\
     , isEnabled, bgColour, disabledBgColour, inkColour, disabledInkColour\
-    , innerBufferFrac, outerBufferFrac):
+    , childSequenceDir=None):
 
     # The 'callbackFunction' is expected to take 2 arguments, the first being the widget 'self' object, the second being a ClickEvent object (see module header for a description of this). The callbackFunction is expected to return another object of type ClickEvent, although None is also acceptable. A return of None will cause the parent object of the present widget (which at time of writing must be a Frame) to call its default callback.
 
-    _Widget.__init__(self, parent, name, sizes, False, isEnabled\
+    _Widget.__init__(self, parent, name, sizeSpecs, False, isEnabled\
       , bgColour, disabledBgColour, inkColour, disabledInkColour\
-      , innerBufferFrac, outerBufferFrac)
+      , childSequenceDir)
 
     if callbackFunction is None:
       self.callbackFunction = self._doNothingCallback
@@ -402,43 +414,25 @@ An _ClickableWidget object has a callback function (although this can be None, i
 #.......................................................................
 class Frame(_PassiveWidget):
   """
-A Frame object primarily is designed to contain other 'child' objects of type _Widget.
+A Frame object primarily is designed to contain other 'child' objects of type _Widget. Clicking on it outside any of its children is supposed to generate no action, but note that the user can supply a defaultCallbackFunction which is called in such circumstances.
   """
 
-  isFrame = True
-  possibleAlongJustifies = ['leftOrDown', 'rightOrUp', 'centre', 'spread']
-  possibleCrossJustifies = ['leftOrDown', 'rightOrUp', 'centre']
-
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, isTransparent=False, isEnabled=True\
-    , bgColour=None, disabledBgColour=None, innerBufferFrac=None, outerBufferFrac=None\
-    , childSequenceDir=1, alongJustify='spread', crossJustify='centre'\
+  def __init__(self, parent, name, sizeSpecs, isTransparent=False, isEnabled=True\
+    , bgColour=None, disabledBgColour=None, childSequenceDir=VERTICAL\
     , defaultCallbackFunction=None):
 
-    _PassiveWidget.__init__(self, parent, name, sizes, isTransparent\
+    if childSequenceDir is None:
+      raise ValueError("Frame instantiation argument 'childSequenceDir' cannot be None.")
+
+    _PassiveWidget.__init__(self, parent, name, sizeSpecs, isTransparent\
       , isEnabled, bgColour, disabledBgColour, None, None\
-      , innerBufferFrac, outerBufferFrac)
+      , childSequenceDir)
 
-    self.childSequenceDir   = childSequenceDir # either 0 for children arrayed in the X direction (horizontally) or 1 for children arrayed in the Y direction.
-
-    if not alongJustify in self.possibleAlongJustifies:
-      raise ValueError('alongJustify %s requested for widget %s is not recognized.' % (alongJustify, self.name))
-
-    if not crossJustify in self.possibleCrossJustifies:
-      raise ValueError('crossJustify %s requested for widget %s is not recognized.' % (alongJustify, self.name))
-
-    self.alongJustify = alongJustify # justify children within the frame in the direction of their sequence: leftOrDown, rightOrUp, centre or spread.
-    self.crossJustify = crossJustify # justify children within the frame normal to their sequence: leftOrDown, rightOrUp or centre.
-
-    if not parent is None and defaultCallbackFunction is None:
-      self.defaultCallbackFunction = parent.defaultCallbackFunction
+    if not self.parent is None and defaultCallbackFunction is None:
+      self.defaultCallbackFunction = self.parent.defaultCallbackFunction
     else:
       self.defaultCallbackFunction = defaultCallbackFunction
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def _append(self, child):
-    self.childList.append(child)
-    self.gui._widgetDict[child.name] = child
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def doOnMouseClick(self, lastClickEvent):
@@ -446,7 +440,8 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
     if self.isEnabled:
       (x, y) = lastClickEvent.getCursorXY()
 
-      for child in self.childList:
+      # A Frame object is expected to have self.children != None.
+      for child in self.children.childList:
         if child.contains(x, y):
           newClickEvent = child.doOnMouseClick(oldClickEvent)
           break
@@ -467,16 +462,20 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
   def changeEnableState(self, isEnabled):
     # This is needed because some callbacks may want to toggle this state. Also we need a method particularly for Frame objects, so they can also disable all their children.
     self.isEnabled = isEnabled
-    for child in self.childList:
+    # A Frame object is expected to have self.children != None.
+    for child in self.children.childList:
       child.changeEnableState(isEnabled)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setUpPlotter(self):
-    self.widgetPlotter = self.gui.plotter.getFramePlotter(self.ranges[0].lo\
-      , self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi, self.bgColour\
-      , self.disabledBgColour, drawGroove=True)
+    self.widgetPlotter = self.rootWidget.plotter.getFramePlotter(self.sizes[0].range.lo\
+      , self.sizes[0].range.hi, self.sizes[1].range.lo, self.sizes[1].range.hi\
+      , self.bgColour, self.disabledBgColour, drawGroove=True)
 
-    for child in self.childList:
+    if self.children is None:
+      return
+
+    for child in self.children.childList:
       child.setUpPlotter()
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -484,302 +483,72 @@ A Frame object primarily is designed to contain other 'child' objects of type _W
     if not self.isTransparent:
       self.widgetPlotter.draw(self.isEnabled)
 
-    for child in self.childList:
-      if self.gui._debug: print 'About to draw child %s of %s' % (child.name, self.name)
-      child.draw()
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def setBuffersForChildren(self, xOrY, spaces=''):
-    if self.gui._debug: print spaces+'Setting %s buffers for children of %s' % (_dirStrs[xOrY], self.name)
-    for child in self.childList:
-      if self.gui._debug: print spaces+'  Child is', child.name
-      child.outerBuffer[xOrY] = child._outerBufferFrac[xOrY]*self.gui.size[xOrY]
-      child.innerBuffer[xOrY] = child._innerBufferFrac[xOrY]*self.gui.size[xOrY]
-      if self.gui._debug: print spaces+'    Inner buffer = %s' % (child.innerBuffer[xOrY])
-      if self.gui._debug: print spaces+'    Outer buffer = %s' % (child.outerBuffer[xOrY])
-      if child.isFrame:
-        child.setBuffersForChildren(xOrY, spaces+'  ')
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def calcTotalSizeParallelChildren(self, xOrY):
-    totalChildrenSize = 0.0
-    numChildren = len(self.childList)
-    for i in range(numChildren):
-      child = self.childList[i]
-
-      totalChildrenSize += child.size[xOrY]
-
-      if i<1 or i>=(numChildren-1):
-        totalChildrenSize += child.outerBuffer[xOrY]/2.0
-      else:
-        totalChildrenSize += child.outerBuffer[xOrY]
-
-    return totalChildrenSize
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def calcTotalSizeChildren(self, xOrY, spaces=''):
-    # If self.spaceDemand[xOrY]=='expandToFit', this returns the minimum total size of the children; otherwise it returns the absolute total size.
-    #
-    # The second thing this method does is fix the size of any children which have child.spaceDemand[xOrY]=='shrinkToFit' and set their child.spaceDemand[xOrY] to 'exact'. If self.spaceDemand[xOrY]=='expandToFit', any children which are also 'expandToFit' are left that way; if not, all children are set to 'exact'.
-    #
-    # The most dense allowed child packing is diagrammed as follows to explain the role of the various sizes and buffers.
-    #	 ______________________________________________________________________________
-    #   |                                                                              |
-    #	|  /- self.innerBuffer/2                               self.innerBuffer/2 -\   |
-    #	|<-->                                                                      <-->|
-    #   |                            /- (child1.outerBuffer+child2.outerBuffer)/2      |
-    #	|     ___________________ <------> _________________           ___________     |
-    #	|    |<-- child1.size -->|        |<- child2.size ->| etc         childN  |    |
-    #	|    |___________________|        |_________________|          ___________|    |
-    #	|     <------------------------------------------------------------------>     |
-    #	|                       Total  size  of  children                              |
-    #   |______________________________________________________________________________|
-    #
-    # Thus: total size of children = child1.size
-    #	                           + child1.outerBuffer/2
-    #	                           + child2.size
-    #	                           + child2.outerBuffer
-    #	                           + ...
-    #	                           + childN-1.size
-    #	                           + childN-1.outerBuffer
-    #	                           + childN.size
-    #	                           + childN.outerBuffer/2
-    #
-    # I.e. only half the outer buffer is added to the start and end children.
-    #
-    # Also, self.size[xOrY] in this case should be == self.innerBuffer[xOrY] + total size of children
-
-    if self.gui._debug:
-      print spaces+'Calculating total %s size of children of %s' % (_dirStrs[xOrY], self.name)
-      if self.spaceDemand[xOrY]=='exact':
-        print spaces+'%s size of %s is %f' % (_dirStrs[xOrY], self.name, self.size[xOrY])
-
-    numChildren = len(self.childList) # for convenience.
-    if numChildren<=0:
-      if self.gui._debug: print spaces+'Frame %s has no children.' % (self.name)
-      return 0.0
-
-    # First fix the size of all children which have spaceDemand[xOrY]=='shrinkToFit':
-    #
-    numChildrenWithExpand = 0
-    for child in self.childList:
-      if self.gui._debug: print spaces+'Child %s %s spaceDemand is %s' % (child.name, _dirStrs[xOrY], child.spaceDemand[xOrY])
-      if child.spaceDemand[xOrY]=='shrinkToFit': # child must be a frame.
-        child.size[xOrY] = child.innerBuffer[xOrY] + child.calcTotalSizeChildren(xOrY, spaces+'  ')
-        child.spaceDemand[xOrY] = 'exact'
-        if self.gui._debug: print spaces+'Child.spaceDemand %s shrinkToFit->exact, of size %f in %s.' % (child.name, child.size[xOrY], _dirStrs[xOrY])
-
-      elif child.spaceDemand[xOrY]=='expandToFit':
-        numChildrenWithExpand += 1
-
-        # Store the minimum size in child.size[xOrY]:
-        child.size[xOrY] = child.innerBuffer[xOrY]
-        if child.isFrame:
-          child.size[xOrY] += child.calcTotalSizeChildren(xOrY, spaces+'  ') # method returns the minimum total size for child.spaceDemand[xOrY]=='expandToFit'.
-
-      else: # child.spaceDemand[xOrY]=='exact', and we don't need to calculate the size of the child, since it is specified and fixed.
-        if child.isFrame:
-          # Call the routine (we don't need its result) to fix the size of all children of child:
-          child.calcTotalSizeChildren(xOrY, spaces+'  ')
-        if self.gui._debug: print spaces+'Child.spaceDemand %s is exact, of size %f in %s.' % (child.name, child.size[xOrY], _dirStrs[xOrY])
-
-    if self.spaceDemand[xOrY]=='shrinkToFit' and numChildrenWithExpand>0: # This should have been checked at the time of creation of each child.
-      raise ValueError('bug00')
-
-    # Calculate the minimum space taken up by the children. If we work normal to the sequence of child widgets, this will be the maximum value of the child minima; if we work parallel to the sequence, we add the child minima.
-    #
-    if self.childSequenceDir==xOrY: # parallel
-      minChildSize = self.calcTotalSizeParallelChildren(xOrY)
-      if self.gui._debug: print spaces+'Frame %s: min total child size along (%s) = %f' % (self.name, _dirStrs[xOrY], minChildSize)
-
-    else: # we're working normal to the child sequence.
-      minChildSize = 0.0
-      for child in self.childList:
-        if minChildSize < child.size[xOrY]:
-          minChildSize = child.size[xOrY]
-      if self.gui._debug: print spaces+'Frame %s: min child size across (%s) = %f' % (self.name, _dirStrs[xOrY], minChildSize)
-
-    if self.spaceDemand[xOrY]=='expandToFit' or self.spaceDemand[xOrY]=='shrinkToFit':
-      return minChildSize
-
-    # A second purpose of the present method is to set the sizes for all children if we know, or can calculate, the parent size. The possible remaining cases are listed as follows:
-    #
-    #	self.spaceDemand[xOrY]:   numChildrenWithExpand>0?	What to do:
-    #
-    #	   'exact'			no			Check there is space. No child action, return minChildSize
-    #
-    #	   'exact'			yes			Check there is space, dole out space to children, make them all exact; return new size
-    #
-    # Remember that at this point, self.spaceDemand[xOrY] can only be 'exact'. The children are either 'exact' or 'expandToFit'.
-
-    spareSpace = self.size[xOrY] - self.innerBuffer[xOrY] - minChildSize
-    if spareSpace<0:
-      raise ValueError('Direction %s: minimum space %e needed by children of %s is larger than its size %e.' % (_dirStrs[xOrY], minChildSize, self.name, self.size[xOrY] - self.innerBuffer[xOrY]))
-
-    if numChildrenWithExpand<=0:
-      return minChildSize
-
-    if self.childSequenceDir==xOrY: # parallel
-      spareSpacePerChild = spareSpace/float(numChildrenWithExpand)
-      for child in self.childList:
-        if child.spaceDemand[xOrY]=='expandToFit':
-          child.size[xOrY] += spareSpacePerChild
-          child.spaceDemand[xOrY] = 'exact'
-          if self.gui._debug: print spaces+'Child.spaceDemand %s expandToFit->exact, of size %f in %s.' % (child.name, child.size[xOrY], _dirStrs[xOrY])
-
-          if child.isFrame:
-            # Call the routine again (we don't need its result) to fix the size of all children of child:
-            child.calcTotalSizeChildren(xOrY, spaces+'  ')
-
-    else: # we're working normal to the child sequence.
-      for child in self.childList:
-        if child.spaceDemand[xOrY]=='expandToFit':
-          child.size[xOrY] = self.size[xOrY] - self.innerBuffer[xOrY]
-          child.spaceDemand[xOrY] = 'exact'
-          if self.gui._debug: print spaces+'Child.spaceDemand %s expandToFit->exact, of size %f in %s.' % (child.name, child.size[xOrY], _dirStrs[xOrY])
-
-          if child.isFrame:
-            # Call the routine again (we don't need its result) to fix the size of all children of child:
-            child.calcTotalSizeChildren(xOrY, spaces+'  ')
-
-    return self.size[xOrY] - self.innerBuffer[xOrY]
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def positionChildren(self, xOrY):
-    # This must not be called unless self and its children have spaceDemand[xOrY]=='exact'.
-
-    if self.gui._debug: print 'Calculating %s positions of children of %s' % (_dirStrs[xOrY], self.name)
-
-    numChildren = len(self.childList) # for convenience.
-    if numChildren<=0:
+    if self.children is None:
       return
 
-    if self.ranges[xOrY] is None:
-      raise ValueError('You cannot call %s.positionChildren(%d) unless %s.ranges[%d] has been set.' % (self.name, xOrY, self.name, xOrY))
-
-    if self.spaceDemand[xOrY]!='exact':
-      raise ValueError("You cannot call %s.positionChildren(%d) unless %s.spaceDemand[%d]=='exact'" % (self.name, xOrY, self.name, xOrY))
-
-    for child in self.childList:
-      if child.spaceDemand[xOrY]!='exact':
-        raise ValueError("You cannot call %s.positionChildren(%d) unless spaceDemand[%d]=='exact' for child %s" % (self.name, xOrY, xOrY, child.name))
-
-    if self.childSequenceDir==xOrY: # parallel
-      totalChildrenSize = self.calcTotalSizeParallelChildren(xOrY)
-      spareSpacePerChild = 0.0 # default
-
-      if   self.alongJustify=='leftOrDown':
-        startPoint = self.ranges[xOrY].lo + self.innerBuffer[xOrY]/2.0
-      elif self.alongJustify=='rightOrUp':
-        startPoint = self.ranges[xOrY].hi - self.innerBuffer[xOrY]/2.0 - totalChildrenSize
-      elif self.alongJustify=='centre':
-        startPoint = (self.ranges[xOrY].lo + self.ranges[xOrY].hi)/2.0 - totalChildrenSize/2.0
-      elif self.alongJustify=='spread':
-        startPoint = self.ranges[xOrY].lo + self.innerBuffer[xOrY]/2.0
-
-        spareSpace = self.size[xOrY] - self.innerBuffer[xOrY] - totalChildrenSize
-        if spareSpace<0:
-          spareSpace = 0.0
-
-        spareSpacePerChild = spareSpace/float(numChildren)
-      # No 'else' because we tested this at the time of construction.
-
-      if self.gui._debug: print 'Parallel: justify=%s, start point %f, spareSpacePerChild=%f' % (self.alongJustify, startPoint, spareSpacePerChild)
-
-      for i in range(numChildren):
-        child = self.childList[i]
-
-        if i<1:
-          loBuffer = 0.0
-        else:
-          loBuffer = child.outerBuffer[xOrY]/2.0
-
-        if i>=(numChildren-1):
-          hiBuffer = 0.0 # this does not really get used but I'll include it here just to tie up a possible loose end for diagnostics.
-        else:
-          hiBuffer = child.outerBuffer[xOrY]/2.0
-
-        xyLo = startPoint + loBuffer + spareSpacePerChild/2.0
-        xyHi = xyLo + child.size[xOrY]
-        child.ranges[xOrY] = ra.SimpleRange(xyLo, xyHi)
-        startPoint += loBuffer + child.size[xOrY] + hiBuffer + spareSpacePerChild # The last one does not get used.
-
-    else: # we're working normal to the child sequence.
-      if   self.crossJustify=='leftOrDown':
-        startPoint = self.ranges[xOrY].lo + self.innerBuffer[xOrY]/2.0
-        for child in self.childList:
-          xyLo = startPoint
-          xyHi = xyLo + child.size[xOrY]
-          child.ranges[xOrY] = ra.SimpleRange(xyLo, xyHi)
-
-      elif self.crossJustify=='rightOrUp':
-        startPoint = self.ranges[xOrY].hi - self.innerBuffer[xOrY]/2.0
-        for child in self.childList:
-          xyHi = startPoint
-          xyLo = xyHi - child.size[xOrY]
-          child.ranges[xOrY] = ra.SimpleRange(xyLo, xyHi)
-
-      elif self.crossJustify=='centre':
-        startPoint = (self.ranges[xOrY].lo + self.ranges[xOrY].hi)/2.0
-        for child in self.childList:
-          xyLo = startPoint - child.size[xOrY]/2.0
-          xyHi = xyLo + child.size[xOrY]
-          child.ranges[xOrY] = ra.SimpleRange(xyLo, xyHi)
-
-      # No 'else' because we tested this at the time of construction.
-
-    for child in self.childList:
-      if child.isFrame:
-        child.positionChildren(xOrY)
+    for child in self.children.childList:
+      if self.rootWidget._debug: print 'About to draw child %s of %s' % (child.name, self.name)
+      child.draw()
 
 
 #.......................................................................
 class Label(_PassiveWidget,_TextWidget):
+  """
+Does what it says on the box. This is a passive widget - clicking on it performs no action.
+  """
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, text, isEnabled=True, bgColour=None\
-    , disabledBgColour=None, inkColour=None, disabledInkColour=None\
-    , outerBufferFrac=None):
+  def __init__(self, parent, name, sizeSpecs, text, isEnabled=True, bgColour=None\
+    , disabledBgColour=None, inkColour=None, disabledInkColour=None):
 
-    _PassiveWidget.__init__(self, parent, name, sizes, False\
+    _PassiveWidget.__init__(self, parent, name, sizeSpecs, False\
       , isEnabled, bgColour, disabledBgColour, inkColour, disabledInkColour\
-      , [0,0], outerBufferFrac)
+      , childSequenceDir=None)
 
     _TextWidget.__init__(self, text)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setUpPlotter(self):
-    self.widgetPlotter = self.gui.plotter.getLabelPlotter(self.ranges[0].lo\
-      , self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi\
+    self.widgetPlotter = self.rootWidget.plotter.getLabelPlotter(self.sizes[0].range.lo\
+      , self.sizes[0].range.hi, self.sizes[1].range.lo, self.sizes[1].range.hi\
       , self.text, self.bgColour, self.disabledBgColour, self.inkColour\
       , self.disabledInkColour)
 
 
-
 #.......................................................................
 class Button(_ClickableWidget,_TextWidget):
+  """
+A Button defines a rectangular field which, when clicked, calls some user-supplied function.
+  """
+  _doTest=False
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, text, callbackFunction, isEnabled=True\
-    , bgColour=None, disabledBgColour=None, inkColour=None, disabledInkColour=None\
-    , outerBufferFrac=None):
+  def __init__(self, parent, name, sizeSpecs, text, callbackFunction=None\
+    , isEnabled=True, bgColour=None, disabledBgColour=None, inkColour=None\
+    , disabledInkColour=None):
 
-    _ClickableWidget.__init__(self, parent, name, sizes, callbackFunction, True\
+    _ClickableWidget.__init__(self, parent, name, sizeSpecs, callbackFunction, True\
       , isEnabled, bgColour, disabledBgColour, inkColour, disabledInkColour\
-      , [0,0], outerBufferFrac)
+      , childSequenceDir=None)
 
     _TextWidget.__init__(self, text)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setUpPlotter(self):
-    self.widgetPlotter = self.gui.plotter.getButtonPlotter(self.ranges[0].lo\
-      , self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi\
+    self.widgetPlotter = self.rootWidget.plotter.getButtonPlotter(self.sizes[0].range.lo\
+      , self.sizes[0].range.hi, self.sizes[1].range.lo, self.sizes[1].range.hi\
       , self.text, self.bgColour, self.disabledBgColour, self.inkColour\
       , self.disabledInkColour)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawOnClick(self):
+    if self._doTest and self.name=='b4':
+      print '>>>Entering widgets.Button.drawOnClick()'
+
     self.widgetPlotter.draw(self.isEnabled, isPressed=True)
     time.sleep(0.1)
     self.widgetPlotter.draw(self.isEnabled, isPressed=False)
+
+    if self._doTest and self.name=='b4':
+      print '<<< Leaving widgets.Button.drawOnClick()'
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def draw(self):
@@ -787,15 +556,18 @@ class Button(_ClickableWidget,_TextWidget):
 
 #.......................................................................
 class CheckButton(Button):
+  """
+A CheckButton is a Button with a memory. Clicking on it toggles its state between selected and not selected.
+  """
   defaultCheckState = False
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, text, callbackFunction, isEnabled=True\
-    , bgColour=None, disabledBgColour=None, inkColour=None, disabledInkColour=None\
-    , outerBufferFrac=None, startState=None):
+  def __init__(self, parent, name, sizeSpecs, text, callbackFunction=None\
+    , isEnabled=True, bgColour=None, disabledBgColour=None, inkColour=None\
+    , disabledInkColour=None, startState=None):
 
-    Button.__init__(self, parent, name, sizes, text, callbackFunction, isEnabled\
-      , bgColour, disabledBgColour, inkColour, disabledInkColour, outerBufferFrac)
+    Button.__init__(self, parent, name, sizeSpecs, text, callbackFunction, isEnabled\
+      , bgColour, disabledBgColour, inkColour, disabledInkColour)
 
     if startState is None:
       self.isSelected = self.defaultCheckState
@@ -823,21 +595,34 @@ class CheckButton(Button):
     raise ex.EmptyMethod()
 
 #.......................................................................
-class RadioButtons(Frame):###, _ClickableWidget):
+class RadioButtons(Frame):
+  """
+Radio buttons are a line of CheckButton objects, only 1 of which may be selected at any time.
+  """
+
   defaultRadioI = 0
+  _test = False
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, buttonTexts, callbackFunction, isEnabled=True\
-    , bgColour=None, disabledBgColour=None, inkColour=None, disabledInkColour=None\
-    , innerBufferFrac=None, outerBufferFrac=None, childSequenceDir=1, alongJustify='spread'\
-    , crossJustify='centre', defaultCallbackFunction=None, startI=None):
+  def __init__(self, parent, name, sizeSpecs, buttonTexts, callbackFunction=None\
+    , isEnabled=True, bgColour=None, disabledBgColour=None, inkColour=None\
+    , disabledInkColour=None, childSequenceDir=VERTICAL\
+    , defaultCallbackFunction=None, startI=None):
 
-    Frame.__init__(self, parent, name, sizes, True, isEnabled\
-      , bgColour, disabledBgColour, innerBufferFrac, outerBufferFrac\
-      , childSequenceDir, alongJustify, crossJustify\
-      , defaultCallbackFunction)
+    if self._test:
+      bgColour = 'green'
+      disabledBgColour = 'blue'
 
-    self.callbackFunction = callbackFunction
+    Frame.__init__(self, parent, name, sizeSpecs, True, isEnabled\
+      , bgColour, disabledBgColour, childSequenceDir, defaultCallbackFunction)
+
+#***** would be better to supply individual CBF for the buttons, and use a variant of the Frame.doOnMouseClick() which detected which child was clicked and set self.selectedI from that; or maybe try to abstract the non-click stuff of Frame as a _Frame class... hmm maybe not. :-/ 
+
+    if callbackFunction is None:
+      self.callbackFunction = self._doNothingCallback
+    else:
+      self.callbackFunction = callbackFunction
+
     self.inkColour = inkColour
     self.disabledInkColour = disabledInkColour
 
@@ -862,33 +647,39 @@ class RadioButtons(Frame):###, _ClickableWidget):
       else:
         childName = '%s_%d' % (self.name, i)
 
-      childSizes = [Size('expandToFit'),Size('expandToFit')]
+      childSizes = [wge.WidgetSize('expandToFit')\
+                  , wge.WidgetSize('expandToFit')]
 
-      self._append(CheckButton(self, childName, childSizes, text, None, self.isEnabled\
-        , self.bgColour, self.disabledBgColour, self.inkColour, self.disabledInkColour\
-        , self._outerBufferFrac, startState))
-
-
-###    _ClickableWidget.__init__(self, plotter, xLo, xHi, yLo, yHi, callbackFunction, state, enabled, bgColour, inkColour, disabledInkColour)
-####### This if there is no problems due to diamond inheritance. Then would not need to set self.callbackFunction above.
+      dummyBtn = CheckButton(self, childName, childSizes, text, None, self.isEnabled\
+        , None, self.disabledBgColour, self.inkColour, self.disabledInkColour\
+        , startState)
+      # This is all that is needed, because the parent _Widget class appends the new CheckButton to self.childList and also adds it to self.rootWidget._widgetDict[child.name]. We can throw the reference in dummyBtn away since we store it thus elsewhere.
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def doOnMouseClick(self, lastClickEvent):
     oldClickEvent = lastClickEvent.copy() # just to avoid possible side-effects.
     if self.isEnabled:
-      (x, y) = lastClickEvent.getCursorXY()
-      for i in range(len(self.childList)):
-        child = self.childList[i]
-        if child.contains(x, y) and i!=self.selectedI:
-          self.childList[self.selectedI].isSelected = False
-          self.childList[self.selectedI].draw()
-          self.selectedI = i
-          child.isSelected = True
-          child.draw()
-          newClickEvent = self.callbackFunction(self, oldClickEvent)
-          break
+      noChildWasClicked = True # default
 
-      else: # no child contained the cursor at the time of mouse click.
+      if not self.children is None:
+        (x, y) = lastClickEvent.getCursorXY()
+
+        for i in range(len(self.children.childList)):
+          child = self.children.childList[i]
+          if child.contains(x, y) and i!=self.selectedI:
+            self.children.childList[self.selectedI].isSelected = False
+            self.children.childList[self.selectedI].draw()
+            self.selectedI = i
+            child.isSelected = True
+            child.draw()
+            newClickEvent = self.callbackFunction(self, oldClickEvent)
+            noChildWasClicked = False
+            break
+
+        else: # no child contained the cursor at the time of mouse click.
+          pass
+
+      if noChildWasClicked:
         if self.defaultCallbackFunction is None:
           newClickEvent = None
         else:
@@ -901,18 +692,27 @@ class RadioButtons(Frame):###, _ClickableWidget):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def draw(self):
-    for child in self.childList:
+    if not self.isTransparent:
+      self.widgetPlotter.draw(self.isEnabled)
+
+    if self.children is None:
+      return
+
+    for child in self.children.childList:
       child.draw()
 
 #.......................................................................
 class Canvas(_ClickableWidget):
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, callbackFunction, redrawOnClick=False\
-    , bgColour=None, outerBufferFrac=None, initialDrawFunction=None):
+  """
+This is intended to provide a field for the user to display images or drawings on.
+  """
 
-    _ClickableWidget.__init__(self, parent, name, sizes, callbackFunction\
-      , redrawOnClick, True, bgColour, None, None, None\
-      , [0,0], outerBufferFrac)
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def __init__(self, parent, name, sizeSpecs, callbackFunction=None, redrawOnClick=False\
+    , bgColour='black', initialDrawFunction=None):
+
+    _ClickableWidget.__init__(self, parent, name, sizeSpecs, callbackFunction\
+      , redrawOnClick, True, bgColour, None, None, None)
 
     self.initialDrawFunction = initialDrawFunction
     self.alreadyDrawnOnce = False
@@ -923,8 +723,9 @@ class Canvas(_ClickableWidget):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setUpPlotter(self):
-    self.widgetPlotter = self.gui.plotter.getCanvasPlotter(self.ranges[0].lo\
-      , self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi, self.bgColour)
+    self.widgetPlotter = self.rootWidget.plotter.getCanvasPlotter(self.sizes[0].range.lo\
+      , self.sizes[0].range.hi, self.sizes[1].range.lo, self.sizes[1].range.hi\
+      , self.bgColour)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def draw(self):
@@ -938,18 +739,20 @@ class Canvas(_ClickableWidget):
 
 #.......................................................................
 class Slider(_ClickableWidget):
+  """
+A widget with a slider which may be moved with the mouse.
+  """
   _defaultStartValue = 0.0
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, parent, name, sizes, callbackFunction, isEnabled=True\
+  def __init__(self, parent, name, sizeSpecs, callbackFunction, isEnabled=True\
     , bgColour=None, disabledBgColour=None, inkColour=None, disabledInkColour=None\
-    , outerBufferFrac=None, isVertical=True, transformObject=None, startValue=None):
+    , isVertical=True, transformObject=None, startValue=None):
 
    # The purpose of transformObject is to convert the cursor position to the slider value, and vice versa.
 
-    _ClickableWidget.__init__(self, parent, name, sizes, callbackFunction, True\
-      , isEnabled, bgColour, disabledBgColour, inkColour, disabledInkColour\
-      , [0,0], outerBufferFrac)
+    _ClickableWidget.__init__(self, parent, name, sizeSpecs, callbackFunction, True\
+      , isEnabled, bgColour, disabledBgColour, inkColour, disabledInkColour)
 
     self.transformObject = transformObject
     self.isVertical = isVertical
@@ -961,9 +764,11 @@ class Slider(_ClickableWidget):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setUpPlotter(self):
-    self.widgetPlotter = self.gui.plotter.getSliderPlotter(self, self.ranges[0].lo\
-      , self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi, self.transformObject\
-      , self.isVertical, self.bgColour, self.disabledBgColour, self.inkColour, self.disabledInkColour)
+    self.widgetPlotter = self.rootWidget.plotter.getSliderPlotter(self\
+      , self.sizes[0].range.lo, self.sizes[0].range.hi\
+      , self.sizes[1].range.lo, self.sizes[1].range.hi, self.transformObject\
+      , self.isVertical, self.bgColour, self.disabledBgColour, self.inkColour\
+      , self.disabledInkColour)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def doOnMouseClick(self, lastClickEvent):
@@ -984,13 +789,15 @@ class Slider(_ClickableWidget):
 
 #.......................................................................
 class GUI(Frame):
+  """
+This class must be the first widget instantiated.
+  """
 
-  isGuiFrame = True
-
+  _doTest=False
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, name, sizes, plotter=None, isEnabled=True, bgColour=None\
-    , innerBufferFrac=None, childSequenceDir=1, alongJustify='spread'\
-    , crossJustify='centre', defaultCallbackFunction=None, userInitialFunction=None, debug=False):
+  def __init__(self, name, sizeSpecs, plotter=None, isEnabled=True, bgColour=None\
+    , childSequenceDir=VERTICAL, defaultCallbackFunction=None, userInitialFunction=None\
+    , debug=False):
 
     if plotter is None:
       if not importDrawWentOk:
@@ -1000,19 +807,12 @@ class GUI(Frame):
     else:
       self.plotter = plotter
 
-    Frame.__init__(self, None, name, sizes, True, isEnabled\
-      , bgColour, None, innerBufferFrac, [0,0]\
-      , childSequenceDir, alongJustify, crossJustify\
-      , defaultCallbackFunction)
+    Frame.__init__(self, None, name, sizeSpecs, True, isEnabled\
+      , bgColour, None, childSequenceDir, defaultCallbackFunction)
 
     self.userInitialFunction = userInitialFunction
 
-    for xOrY in [0,1]:
-      if self.spaceDemand[xOrY]=='expandToFit':
-        raise ValueError("Space demand style for the GUI may not be 'expandToFit'.")
-
-      if self.size[xOrY] is None:
-        raise ValueError("You must specify sizes for the GUI in order that widget borders can be calculated.")
+    self.geob = wge.Geometry(self, self._numAxes)
 
     self.isSetUp = False
 
@@ -1024,47 +824,47 @@ class GUI(Frame):
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def doSetUp(self):
-    # First we set the borders for all the widgets.
-    if self._debug: print 'Setup: setting borders'
-    for xOrY in [0,1]:
-      self.setBuffersForChildren(xOrY)
-      self.outerBuffer[xOrY] = self._outerBufferFrac[xOrY]*self.size[xOrY]
-      self.innerBuffer[xOrY] = self._innerBufferFrac[xOrY]*self.size[xOrY]
-    if self._debug: print
-
-    # Now we calculate the sizes of every widget.
+    # Calculate the border widths, size and position of every widget.
     if self._debug: print 'Setup: calculating all widget sizes'
     for xOrY in [0,1]:
-      # Since the GUI may not have self.spaceDemand[xOrY]=='expandToFit', the call to calcTotalSizeChildren not only sets the sizes of all children but also returns their true total size, not just the minimum value.
-      totalSizeChildren = self.calcTotalSizeChildren(xOrY)
-      if self.spaceDemand[xOrY]=='shrinkToFit':
-        self.size[xOrY] = self.innerBuffer[xOrY] + totalSizeChildren
-        self.spaceDemand[xOrY] = 'exact'
-
-      self.ranges[xOrY] = ra.SimpleRange(0.0, self.size[xOrY])
-      if self._debug: print
+      self.geob.calcRanges(xOrY)
     if self._debug: print
 
-    # Now we need to position them.
-    if self._debug: print 'Setup: positioning widgets'
-    for xOrY in [0,1]:
-      self.positionChildren(xOrY)
-    if self._debug: print
+    if self._debug: self.geob.printAllRanges()
 
-    self.plotter.initializePlot(self.ranges[0].lo, self.ranges[0].hi, self.ranges[1].lo, self.ranges[1].hi, self.bgColour)
+    self.plotter.initializePlot(self.sizes[0].range.lo, self.sizes[0].range.hi\
+      , self.sizes[1].range.lo, self.sizes[1].range.hi, self.bgColour)
     self.checkColoursChildren()
     self.setUpPlotter()
+
+    if self._doTest:
+      import ppgplot as pgplot
+      print 'xxx pgplot.pgqcr(18)=', pgplot.pgqcr(18)
 
     self.isSetUp = True
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def __call__(self):
     if not self.isSetUp: self.doSetUp()
+
+    if self._doTest:
+      import ppgplot as pgplot
+      print 'yyy pgplot.pgqcr(18)=', pgplot.pgqcr(18)
+
     self.draw()
+    if self._doTest:
+      print 'zzz pgplot.pgqcr(18)=', pgplot.pgqcr(18)
     self.isFirstDraw = False
 
     if not self.userInitialFunction is None:
       self.userInitialFunction(self) # the user could e.g. use this to do an initial drawing on canvasses before blocking for the first mouse click.
+
+    if self._doTest:
+      self.plotter.lowLevelPlotter.setColour('paper')
+      myci = pgplot.pgqci()
+      print myci, pgplot.pgqcr(myci)
+      self.plotter.lowLevelPlotter.setFill(True)
+      self.plotter.lowLevelPlotter.drawRectangle(1.0,1.0,1.5,1.7)
 
     # Now enter main loop:
     #
@@ -1207,18 +1007,24 @@ if __name__ == '__main__':
 
   dummyPlotter = DummyPlotter()
 
-  sizes = [Size('exact', 10.0),Size('exact', 3.0)]
-  gui = GUI('window', sizes, dummyPlotter, childSequenceDir=0, debug=True)
-  sizes = [Size('exact', 3.0),Size('exact', 2.0)]
-  b0 = Button(gui, 'b0', sizes, 'Hi there', None)
-  sizes = [Size('exact', 5.0),Size('exact', 2.5)]
-  f0 = Frame(gui, 'f0', sizes)
-  sizes = [Size('exact', 3.0),Size('expandToFit', None)]
-  b00 = Button(f0, 'b00', sizes, 'Flobs', None)
-  sizes = [Size('exact', 3.0),Size('expandToFit', None)]
-  b01 = Button(f0, 'b01', sizes, 'More flobs', None)
-  sizes = [Size('exact', 3.0),Size('expandToFit', None)]
-  r02 = RadioButtons(f0, 'r02', sizes, ['R0','R1','R2'], None)
+  sizeSpecs = [Size('exact', 10.0)\
+             , Size('exact', 3.0)]
+  gui = GUI('window', sizeSpecs, dummyPlotter, childSequenceDir=HORIZONTAL, debug=True)
+  sizeSpecs = [Size('exact', 3.0)\
+             , Size('exact', 2.0)]
+  b0 = Button(gui, 'b0', sizeSpecs, 'Hi there', None)
+  sizeSpecs = [Size('exact', 5.0)\
+             , Size('exact', 2.5)]
+  f0 = Frame(gui, 'f0', sizeSpecs)
+  sizeSpecs = [Size('exact', 3.0)\
+             , Size('expandToFit', None)]
+  b00 = Button(f0, 'b00', sizeSpecs, 'Flobs', None)
+  sizeSpecs = [Size('exact', 3.0)\
+             , Size('expandToFit', None)]
+  b01 = Button(f0, 'b01', sizeSpecs, 'More flobs', None)
+  sizeSpecs = [Size('exact', 3.0)\
+             , Size('expandToFit', None)]
+  r02 = RadioButtons(f0, 'r02', sizeSpecs, ['R0','R1','R2'], None)
 
   gui()
 

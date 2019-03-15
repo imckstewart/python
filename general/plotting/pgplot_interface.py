@@ -39,6 +39,7 @@ import ppgplot as pgplot
 
 import my_exceptions as ex
 import plot_utils as plu
+import pg_defs as pgd
 
 
 #.......................................................................
@@ -85,6 +86,7 @@ class ClickHandler:
 class PgplotInterface:
   _defaultDeviceName = '/xs'
   _charHeight = 1.0
+  _defaultPointStyle = pgd.P_POINT
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def __init__(self, cursorHandler=None):
@@ -134,14 +136,20 @@ class PgplotInterface:
     self._oldLineThickness = None
     self._oldFillStyle     = None
     self._oldCharHeight    = None
+    self.pointStyle = self._defaultPointStyle
 
     self.plotDeviceIsOpened = False # default
 
+    self.previousColours = []
+
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def initializePlot(self, worldXLo, worldXHi, worldYLo, worldYHi\
-    , deviceName=None, widthInches=None, yOnXRatio=1.0, doPad=True, fixAspect=True\
-    , doGraphStyle=False):
+    , deviceName=None, widthInches=None, yOnXRatio=1.0, doPad=True, fixAspect=False\
+    , xLabel=None, yLabel=None, title='', startPlotter=True):
     # It is handy to have this separate method since on the one hand I prefer to pass around an instance rather than a class, and on the other it can be useful to postpone loading all the attributes.
+
+    if self.plotDeviceIsOpened:
+      raise ValueError("You cannot call initializePlot() after you have opened a PGPLOT device.")
 
     self.worldXLo = worldXLo
     self.worldXHi = worldXHi
@@ -157,11 +165,72 @@ class PgplotInterface:
     self.yOnXRatio   = yOnXRatio
     self.doPad = doPad
     self.fixAspect = fixAspect
-    self.doGraphStyle = doGraphStyle
+    self.yLabel = yLabel
+    self.title  = title
+
+    if xLabel is None and yLabel is None and title=='':
+      self._drawBox = False
+    else:
+      self._drawBox = True
+
+    self._vXHi = 0.999
+
+    if xLabel is None:
+      self.xLabel = ''
+      self._vXLo = 0.0
+      self._xAxisOptions = 'BC'
+    else:
+      self.xLabel = xLabel
+      self._vXLo = 0.1
+      self._xAxisOptions = 'BCNT'
+
+    if yLabel is None:
+      self.yLabel = ''
+      self._vYLo = 0.0
+      self._yAxisOptions = 'BC'
+    else:
+      self.yLabel = yLabel
+      self._vYLo = 0.1
+      self._yAxisOptions = 'BCNT'
+
+    if title=='':
+      self._vYHi = 0.999
+    else:
+      self._vYHi = 0.9
 
     if self.doPad:
       (self.worldXLo, self.worldXHi, self.worldYLo, self.worldYHi)\
         = plu.doPadLimits(self.worldXLo, self.worldXHi, self.worldYLo, self.worldYHi)
+
+    if startPlotter:
+      self.startPlotter()
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def addColour(self, colour, red, grn, blu):
+    if self.plotDeviceIsOpened:
+      raise ValueError("You cannot call addColour() after you have opened a PGPLOT device.")
+
+    rgb = [red, grn, blu]
+    if colour in self.colours.keys():
+      self.colours[colour]['rgb'] = rgb
+    else:
+      if self.maxCI is None:
+        self.maxCI = 0
+      else:
+        self.maxCI += 1
+      self.colours[colour] = {'ci':self.maxCI,'rgb':rgb}
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def isColourNameValid(self, colour):
+    if colour in self.colours.keys():
+      return True
+    else:
+      return False
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def startPlotter(self):
+    if self.plotDeviceIsOpened:
+      raise ValueError("You already started a plot!")
 
     devId = pgplot.pgopen(self.deviceName)
     self.plotDeviceIsOpened = True
@@ -176,15 +245,12 @@ class PgplotInterface:
       pgplot.pgscr(0,1.0,1.0,1.0)
       pgplot.pgscr(1,0.0,0.0,0.0)
 
-    if self.doGraphStyle:
-      pgplot.pgsvp(0.1,0.999,0.1,0.999)
-    else:
-      pgplot.pgsvp(0.0,0.999,0.0,0.999)
+    pgplot.pgsvp(self._vXLo, self._vXHi, self._vYLo, self._vYHi)
 
-    if fixAspect:
-      pgplot.pgwnad(worldXLo, worldXHi, worldYLo, worldYHi)
+    if self.fixAspect:
+      pgplot.pgwnad(self.worldXLo, self.worldXHi, self.worldYLo, self.worldYHi)
     else:
-      pgplot.pgswin(worldXLo, worldXHi, worldYLo, worldYHi)
+      pgplot.pgswin(self.worldXLo, self.worldXHi, self.worldYLo, self.worldYHi)
     pgplot.pgsfs(2)
 
     pgplot.pgslw(1)
@@ -192,10 +258,24 @@ class PgplotInterface:
 
     self._setColourRepresentations()
 
+    # Set up things so calling pgplot.pggray() won't overwrite the CR of any of the colours in self.colours.
+    #
+    (minCI,maxCI) = pgplot.pgqcir()
+    if minCI<=self.maxCI:
+      pgplot.pgscir(self.maxCI+1,maxCI)
+
     (xLoPixels, xHiPixels, yLoPixels, yHiPixels) = pgplot.pgqvsz(3)
     (xLoInches, xHiInches, yLoInches, yHiInches) = pgplot.pgqvsz(1)
     self.xPixelWorld = (xHiInches - xLoInches) / (xHiPixels - xLoPixels)
     self.yPixelWorld = (yHiInches - yLoInches) / (yHiPixels - yLoPixels)
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def xFracToWorld(self, xFrac):
+    return self.worldXLo*(1.0 - xFrac) + self.worldXHi*xFrac
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def yFracToWorld(self, yFrac):
+    return self.worldYLo*(1.0 - yFrac) + self.worldYHi*yFrac
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def getColourIndexRange(self):
@@ -213,10 +293,6 @@ class PgplotInterface:
     if not self.plotDeviceIsOpened:
       raise ValueError("You have not yet opened a PGPLOT device.")
 
-#    (x0,x1,y0,y1) = pgplot.pgqvsz(3)
-#    pixelXSizeWorld = (self.worldXHi - self.worldXLo)/(x1 - x0)
-#    pixelYSizeWorld = (self.worldYHi - self.worldYLo)/(y1 - y0)
-#    return (pixelXSizeWorld, pixelYSizeWorld)
     return (self.xPixelWorld, self.yPixelWorld)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -224,35 +300,13 @@ class PgplotInterface:
     if not self.plotDeviceIsOpened:
       raise ValueError('you must open a device before you can set colour representations.')
 
+##### check the number of colours does not exceed max for the device.
+
     for colour in self.colours.keys():
       ci = self.colours[colour]['ci']
       rgb = self.colours[colour]['rgb']
       if not rgb is None:
         pgplot.pgscr(ci, rgb[0], rgb[1], rgb[2])
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def addColour(self, colour, red, grn, blu):
-    rgb = [red, grn, blu]
-    if colour in self.colours.keys():
-      self.colours[colour]['rgb'] = rgb
-    else:
-      if self.maxCI is None:
-        self.maxCI = 0
-      else:
-        self.maxCI += 1
-##### check it does not exceed max.
-      self.colours[colour] = {'ci':self.maxCI,'rgb':rgb}
-
-    if self.plotDeviceIsOpened:
-      ci = self.colours[colour]['ci']
-      pgplot.pgscr(ci, rgb[0], rgb[1], rgb[2])
-
-  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def isColourNameValid(self, colour):
-    if colour in self.colours.keys():
-      return True
-    else:
-      return False
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def setColour(self, colour):
@@ -265,6 +319,18 @@ class PgplotInterface:
         pgplot.pgsci(ci)
       except:
         raise ex.UnrecognizedChoiceObject(colour)
+
+    self.previousColours.append(ci)
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def undoSetColour(self):
+    try:
+      ci = self.previousColours.pop()
+    except IndexError:
+      ci = None
+
+    if not ci is None:
+      pgplot.pgsci(ci)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def getColour(self):
@@ -284,6 +350,48 @@ class PgplotInterface:
       return True
     else:
       return False
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def drawPoint(self, x, y, pointStyle=None):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
+    if pointStyle is None:
+      localPointStyle = self.pointStyle
+    else:
+      localPointStyle = pointStyle
+
+    xs = nu.array([x])
+    ys = nu.array([y])
+    pgplot.pgpt(xs, ys, localPointStyle)
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def drawPoints(self, xs, ys, pointStyle=None):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
+    if pointStyle is None:
+      localPointStyle = self.pointStyle
+    else:
+      localPointStyle = pointStyle
+
+    pgplot.pgpt(xs, ys, localPointStyle)
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def drawErrorBars(self, xs, ys, yUncs, pointStyle=None):
+    if not self.plotDeviceIsOpened:
+      raise ValueError("You have not yet opened a PGPLOT device.")
+
+    if pointStyle is None:
+      localPointStyle = self.pointStyle
+    else:
+      localPointStyle = pointStyle
+
+    pgplot.pgpt(xs, ys, localPointStyle)
+    yLos = ys - yUncs
+    yHis = ys + yUncs
+    for i in range(len(xs)):
+      self.drawLine(xs[i], yLos[i], xs[i], yHis[i])
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def drawLine(self, xLo, yLo, xHi, yHi):
@@ -322,28 +430,57 @@ class PgplotInterface:
     pgplot.pgptxt(x, y, 0.0, 0.5, text)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def terminatePlot(self, withBox=False):
+  def drawLegend(self, listOfStyles, listOfColours, listOfTexts, fracHeight=0.25, isLeft=True, isUp=True):
+    # if style is None just draw a line segment.
+    numTexts = len(listOfTexts)
+    x0 = self.xFracToWorld(0.02)
+    x1 = self.xFracToWorld(0.025)
+    x2 = self.xFracToWorld(0.03)
+    for i in range(numTexts):
+      yFrac = 1.0 - fracHeight*((numTexts - i - 0.5)/float(numTexts))
+      y = self.yFracToWorld(yFrac)
+      self.setColour(listOfColours[i])
+      if listOfStyles[i] is None:
+        self.drawLine(x0, y, x1, y)
+      else:
+        self.drawPoint(0.5*(x0+x1), y, listOfStyles[i])
+      pgplot.pgsci(1)
+      pgplot.pgptxt(x2, y, 0.0, 0.0, listOfTexts[i])
+
+  #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+  def terminatePlot(self):
     if not self.plotDeviceIsOpened:
       raise ValueError("You have not yet opened a PGPLOT device.")
 
-    if self.doGraphStyle:
-      opt = 'NT'
-    else:
-      opt = ''
-
-    if withBox:
-      opt = 'BC'+opt
+    if self._drawBox:
       pgplot.pgsci(1)
-      pgplot.pgbox(opt, 0.0, 0, opt, 0.0, 0)
+      pgplot.pgbox(self._xAxisOptions, 0.0, 0, self._yAxisOptions, 0.0, 0)
+      pgplot.pglab(self.xLabel, self.yLabel, self.title)
 
     pgplot.pgend()
 
+    self.plotDeviceIsOpened = False
+
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 if __name__ == '__main__':
-  pass
 
+  import numpy as nu
 
+  import pg_defs as pgd
 
+  worldXLo = 0.0
+  worldXHi = 1.0
+  worldYLo = 0.0
+  worldYHi = 1.0
+
+  xs = nu.array([0.11, 0.16, 0.43, 0.59, 0.64, 0.82])
+  ys = nu.sqrt(xs)
+
+  plotter = PgplotInterface()
+  plotter.initializePlot(worldXLo, worldXHi, worldYLo, worldYHi, xLabel='X of frogs', yLabel='Y of frogs', title='Frog distribution')
+  plotter.setColour('green')
+  plotter.drawPoints(xs, ys, pgd.P_CIRCLE)
+  plotter.terminatePlot()
 
 
 

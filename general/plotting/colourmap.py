@@ -27,13 +27,7 @@ This defines a colourmap object which has methods for reading and writing a colo
 
 _module_name = 'colourmap'
 
-#import os
 import numpy as nu
-#import ppgplot as pgplot
-
-#import pgplot_interface as pgi
-#import draw_widgets as drw
-#import widgets
 
 
 #.......................................................................
@@ -297,15 +291,6 @@ For this I want an object that behaves mostly like a list. However I need it to 
 
 #.......................................................................
 class ColourMap:
-#  _defaultRedFirstHue = 0.0
-#  _defaultGrnFirstHue = 0.0
-#  _defaultBluFirstHue = 0.0
-#  _defaultRedLastHue = 1.0
-#  _defaultGrnLastHue = 1.0
-#  _defaultBluLastHue = 1.0
-#  _numHues = 3
-
-
   _defaultFirstHues = [0.0,0.0,0.0]
   _defaultLastHues  = [1.0,1.0,1.0]
   _hueNames = ['red','grn','blu']
@@ -418,5 +403,5 @@ class ColourMap:
 
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 if __name__ == '__main__':
-  pass
+  print "Meant to be used in conjunction with pg_colourmap.py."
 

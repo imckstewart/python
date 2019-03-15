@@ -80,7 +80,9 @@ class _WidgetPlotter:
   _defaultDisabledInkColour = 'halfred'
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-  def __init__(self, lowLevelPlotter, xLo, xHi, yLo, yHi, text, bgColour, disabledBgColour, inkColour, disabledInkColour):
+  def __init__(self, lowLevelPlotter, xLo, xHi, yLo, yHi, text, bgColour\
+    , disabledBgColour, inkColour, disabledInkColour):
+
     self.lowLevelPlotter = lowLevelPlotter
     self.xLo = xLo
     self.xHi = xHi
@@ -242,6 +244,7 @@ class _ButtonPlotter(_WidgetPlotter):
   def draw(self, enabled, isPressed):
     oldColour = self.lowLevelPlotter.getColour()
     (inkColour, litColour, shadowColour) = _WidgetPlotter.draw(self, enabled)
+
     if isPressed:
       self._drawButton(inkColour, shadowColour, litColour)
     else:
@@ -462,7 +465,6 @@ Returns the world coordinate location of the pointer.
 class Plotter:
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def __init__(self, lowLevelPlotter=None, colourRGBDict={}):
-
     if lowLevelPlotter is None:
       if not importPgiWentOk:
         raise ImportError('Module for default lowLevelPlotter object did not import.')
@@ -507,7 +509,7 @@ class Plotter:
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def terminatePlot(self):
-    self.lowLevelPlotter.terminatePlot(withBox=False)
+    self.lowLevelPlotter.terminatePlot()
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def getFramePlotter(self, xLo, xHi, yLo, yHi, bgColour=None\
@@ -521,7 +523,7 @@ class Plotter:
     , disabledBgColour=None, inkColour=None, disabledInkColour=None):
 
     return _LabelPlotter(self.lowLevelPlotter, xLo, xHi, yLo, yHi\
-      , bgColour, disabledBgColour, inkColour, disabledInkColour, text)
+      , text, bgColour, disabledBgColour, inkColour, disabledInkColour)
 
   #. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
   def getButtonPlotter(self, xLo, xHi, yLo, yHi, text, bgColour=None\
